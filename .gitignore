@@ -1,0 +1,5 @@
+dataset/PhoneLabeling/
+dataset/ProsodyLabeling/
+dataset/split/
+dataset/Wave/
+**/__pycache__/
