@@ -5,7 +5,7 @@ import torch
 from utils.utils import to_device
 import time
 
-device = "cpu" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 epochs = 30
 accum_steps = 1
 grad_clip = 5
@@ -22,7 +22,6 @@ test_dataloader = get_dataloader("./dataset/split/test/wav.scp", "./dataset/spli
 for epoch in range(epochs):
     total_loss = 0.
     model.train()
-    start_time = time.perf_counter()
     for i, input in enumerate(train_dataloader):
         input = to_device(input, device)
         audios = input['audios']
@@ -44,11 +43,6 @@ for epoch in range(epochs):
         if (i+1) % (accum_steps*10) == 0:
             with open("./log.txt", 'a', encoding='utf-8') as f:
                 f.write(f"{epoch}:{i+1}  {total_loss/(i+1)}  {optim.state_dict()['param_groups'][0]['lr']}\n")
-    end_time = time.perf_counter()
-
-    # 计算并打印耗时
-    execution_time = end_time - start_time
-    print(f"循环执行耗时: {execution_time:.6f} 秒")
    
     dict1 = {
         "model": model.state_dict(),
