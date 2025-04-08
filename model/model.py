@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, Union
 from model.subsampling import Subsampling
-from model.encoder import LSTMEncoder
 import math
 
 class PositionalEncoding(torch.nn.Module):
