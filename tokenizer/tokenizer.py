@@ -20,20 +20,32 @@ class Tokenizer:
 
     def __call__(self, s:list):
         """
-        TODO
         输入token list
         返回 token id list
         """
-        return None
+        token_ids = []
+        for token in s:
+            token_ids.append(self.token2id.get(token, self.token2id["<unk>"]))
+        return token_ids
 
     def decode(self, ids: list, ignore_special=True):
         """
-        TODO
         输入为 token id list
         返回为token list
         ignore_special: 是否忽略特殊字符
         """         
-        return None
+        tokens = []
+        for id_val in ids:
+            token = self.id2token.get(id_val)
+            if token is None:
+                if not ignore_special:
+                    tokens.append("<unk>")
+                continue
+
+            if ignore_special and token in self.special_token:
+                continue
+            tokens.append(token)
+        return tokens
     
     def special_token_ids(self):
         return [self.token2id[token] for token in self.special_token]

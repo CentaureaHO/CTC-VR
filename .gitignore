@@ -3,3 +3,4 @@ dataset/ProsodyLabeling/
 dataset/split/
 dataset/Wave/
 **/__pycache__/
+log.txt
