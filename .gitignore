@@ -4,3 +4,5 @@ dataset/split/
 dataset/Wave/
 **/__pycache__/
 log.txt
+wandb
+model1.pt
