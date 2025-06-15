@@ -6,3 +6,6 @@ dataset/Wave/
 log.txt
 wandb
 model1.pt
+**.ipynb_checkpoints
+models
+model.pt
