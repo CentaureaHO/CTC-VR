@@ -16,7 +16,7 @@ epochs = 50
 accum_steps = 1
 grad_clip = 1.0
 
-log_dir = "/root/tf-logs/speech-recognition"
+log_dir = "/root/tf-logs/speech-recognition-selfattention"
 # log_dir = "./speech-recognition"
 os.makedirs(log_dir, exist_ok=True)
 writer = SummaryWriter(log_dir)
