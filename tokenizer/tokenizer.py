@@ -1,5 +1,5 @@
 class Tokenizer:
-    def __init__(self, vocab_file = "./tokenizer/vocab.txt"):
+    def __init__(self, vocab_file="./tokenizer/vocab.txt"):
         self.token2id = {}
         self.id2token = {}
         count = 0
@@ -18,7 +18,7 @@ class Tokenizer:
                 self.id2token[count] = line
                 count += 1
 
-    def __call__(self, s:list):
+    def __call__(self, s: list):
         """
         输入token list
         返回 token id list
@@ -33,7 +33,7 @@ class Tokenizer:
         输入为 token id list
         返回为token list
         ignore_special: 是否忽略特殊字符
-        """         
+        """
         tokens = []
         for id_val in ids:
             token = self.id2token.get(id_val)
@@ -46,15 +46,15 @@ class Tokenizer:
                 continue
             tokens.append(token)
         return tokens
-    
+
     def special_token_ids(self):
         return [self.token2id[token] for token in self.special_token]
-    
+
     def size(self):
         return len(self.token2id)
-    
+
     def padding_id(self):
         return self.token2id["<pad>"]
-    
+
     def blk_id(self):
         return self.token2id["<blk>"]

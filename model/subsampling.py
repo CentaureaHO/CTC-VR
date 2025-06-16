@@ -207,19 +207,24 @@ class Conv2dSubsampling8(nn.Module):
         b, c, t, f = x.size()
         x = self.linear(x.transpose(1, 2).contiguous().view(b, t, c * f))
         return x, (((((audio_len - 3) // 2 + 1) - 3) // 2 + 1) - 3) // 2 + 1
-    
+
 
 class Subsampling(nn.Module):
-    def __init__(self, in_dim, out_dim, dropout_rate = 0.1, subsampling_type = 8):
+    def __init__(self, in_dim, out_dim, dropout_rate=0.1, subsampling_type=8):
         super().__init__()
         if subsampling_type == 6:
-            self.subsampling = Conv2dSubsampling6(in_dim, out_dim, dropout_rate)
+            self.subsampling = Conv2dSubsampling6(
+                in_dim, out_dim, dropout_rate)
         elif subsampling_type == 8:
-            self.subsampling = Conv2dSubsampling8(in_dim, out_dim, dropout_rate)
+            self.subsampling = Conv2dSubsampling8(
+                in_dim, out_dim, dropout_rate)
         elif subsampling_type == 4:
-            self.subsampling = Conv2dSubsampling4(in_dim, out_dim, dropout_rate)
+            self.subsampling = Conv2dSubsampling4(
+                in_dim, out_dim, dropout_rate)
         else:
-            self.subsampling = Conv2dSubsampling8(in_dim, out_dim, dropout_rate)
+            self.subsampling = Conv2dSubsampling8(
+                in_dim, out_dim, dropout_rate)
+
     def forward(self, x, mask):
         x, audio_len = self.subsampling(x, mask)
         return x, audio_len

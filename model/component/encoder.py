@@ -8,19 +8,20 @@ import math
 
 class PositionalEncoding(nn.Module):
     """位置编码"""
-    
+
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
-        
+
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(
+            0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0).transpose(0, 1)
         self.register_buffer('pe', pe)
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
@@ -28,7 +29,7 @@ class PositionalEncoding(nn.Module):
 
 class Conv2dSubsampling4(nn.Module):
     """卷积下采样层，下采样率为4"""
-    
+
     def __init__(self, input_dim: int, output_dim: int, dropout_rate: float = 0.1):
         super().__init__()
         self.conv = nn.Sequential(
@@ -43,7 +44,7 @@ class Conv2dSubsampling4(nn.Module):
         )
         self.subsampling_rate = 4
         self.right_context = 0
-        
+
     def forward(self, x: torch.Tensor, x_mask: torch.Tensor, offset: int = 0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = x.unsqueeze(1)  # (B, 1, T, D)
         x = self.conv(x)
@@ -55,7 +56,7 @@ class Conv2dSubsampling4(nn.Module):
 
 class MultiHeadedAttention(nn.Module):
     """多头注意力机制"""
-    
+
     def __init__(self, n_head: int, n_feat: int, dropout_rate: float = 0.0):
         super().__init__()
         assert n_feat % n_head == 0
@@ -66,7 +67,7 @@ class MultiHeadedAttention(nn.Module):
         self.linear_v = nn.Linear(n_feat, n_feat)
         self.linear_out = nn.Linear(n_feat, n_feat)
         self.dropout = nn.Dropout(p=dropout_rate)
-        
+
     def forward_qkv(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         n_batch = query.size(0)
         q = self.linear_q(query).view(n_batch, -1, self.h, self.d_k)
@@ -76,7 +77,7 @@ class MultiHeadedAttention(nn.Module):
         k = k.transpose(1, 2)  # (batch, head, time2, d_k)
         v = v.transpose(1, 2)  # (batch, head, time2, d_k)
         return q, k, v
-        
+
     def forward_attention(self, value: torch.Tensor, scores: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         n_batch = value.size(0)
         if mask is not None:
@@ -85,13 +86,13 @@ class MultiHeadedAttention(nn.Module):
             attn = torch.softmax(scores, dim=-1).masked_fill(mask, 0.0)
         else:
             attn = torch.softmax(scores, dim=-1)
-            
+
         attn = self.dropout(attn)
         x = torch.matmul(attn, value)  # (batch, head, time1, d_k)
         x = x.transpose(1, 2).contiguous().view(n_batch, -1, self.h * self.d_k)
         return self.linear_out(x)
-        
-    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, 
+
+    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
                 mask: Optional[torch.Tensor] = None, pos_emb: torch.Tensor = None,
                 cache: tuple = (torch.zeros(0, 0, 0, 0), torch.zeros(0, 0, 0, 0))) -> Tuple[torch.Tensor, tuple]:
         q, k, v = self.forward_qkv(query, key, value)
@@ -101,44 +102,46 @@ class MultiHeadedAttention(nn.Module):
 
 class PositionwiseFeedForward(nn.Module):
     """前馈网络"""
-    
+
     def __init__(self, idim: int, hidden_units: int, dropout_rate: float, activation: nn.Module = nn.ReLU()):
         super().__init__()
         self.w_1 = nn.Linear(idim, hidden_units)
         self.activation = activation
         self.dropout = nn.Dropout(dropout_rate)
         self.w_2 = nn.Linear(hidden_units, idim)
-        
+
     def forward(self, xs: torch.Tensor) -> torch.Tensor:
         return self.w_2(self.dropout(self.activation(self.w_1(xs))))
 
 
 class ConvolutionModule(nn.Module):
     """Conformer卷积模块"""
-    
+
     def __init__(self, channels: int, kernel_size: int, activation: nn.Module = nn.SiLU(),
                  norm: str = "batch_norm", causal: bool = False, bias: bool = True):
         super().__init__()
         assert (kernel_size - 1) % 2 == 0
-        self.pointwise_conv1 = nn.Conv1d(channels, 2 * channels, kernel_size=1, stride=1, padding=0, bias=bias)
+        self.pointwise_conv1 = nn.Conv1d(
+            channels, 2 * channels, kernel_size=1, stride=1, padding=0, bias=bias)
         self.depthwise_conv = nn.Conv1d(channels, channels, kernel_size, stride=1,
                                         padding=(kernel_size - 1) // 2, groups=channels, bias=bias)
         if norm == "batch_norm":
             self.norm = nn.BatchNorm1d(channels)
         else:
             self.norm = nn.LayerNorm(channels)
-        self.pointwise_conv2 = nn.Conv1d(channels, channels, kernel_size=1, stride=1, padding=0, bias=bias)
+        self.pointwise_conv2 = nn.Conv1d(
+            channels, channels, kernel_size=1, stride=1, padding=0, bias=bias)
         self.activation = activation
-        
+
     def forward(self, x: torch.Tensor, mask_pad: torch.Tensor = torch.ones((0, 0, 0), dtype=torch.bool),
                 cache: torch.Tensor = torch.zeros((0, 0, 0, 0))) -> Tuple[torch.Tensor, torch.Tensor]:
         # exchange the temporal dimension and the feature dimension
         x = x.transpose(1, 2)  # (batch, channels, time)
-        
+
         # GLU mechanism
         x = self.pointwise_conv1(x)  # (batch, 2*channels, time)
         x = F.glu(x, dim=1)  # (batch, channels, time)
-        
+
         # 1D Depthwise Conv
         x = self.depthwise_conv(x)
         if isinstance(self.norm, nn.BatchNorm1d):
@@ -154,7 +157,7 @@ class ConvolutionModule(nn.Module):
 
 class ConformerEncoderLayer(nn.Module):
     """Conformer编码器层"""
-    
+
     def __init__(self, size: int, self_attn: nn.Module, feed_forward: nn.Module,
                  feed_forward_macaron: Optional[nn.Module] = None, conv_module: Optional[nn.Module] = None,
                  dropout_rate: float = 0.1, normalize_before: bool = True):
@@ -176,30 +179,34 @@ class ConformerEncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
         self.size = size
         self.normalize_before = normalize_before
-        
+
     def forward(self, x: torch.Tensor, mask: torch.Tensor, pos_emb: torch.Tensor,
-                mask_pad: torch.Tensor = torch.ones((0, 0, 0), dtype=torch.bool),
-                att_cache: tuple = (torch.zeros((0, 0, 0, 0)), torch.zeros((0, 0, 0, 0))),
+                mask_pad: torch.Tensor = torch.ones(
+                    (0, 0, 0), dtype=torch.bool),
+                att_cache: tuple = (torch.zeros((0, 0, 0, 0)),
+                                    torch.zeros((0, 0, 0, 0))),
                 cnn_cache: torch.Tensor = torch.zeros((0, 0, 0, 0))) -> Tuple[torch.Tensor, torch.Tensor, tuple, torch.Tensor]:
-        
+
         # macaron style feed forward module
         if self.feed_forward_macaron is not None:
             residual = x
             if self.normalize_before:
                 x = self.norm_ff_macaron(x)
-            x = residual + self.ff_scale * self.dropout(self.feed_forward_macaron(x))
+            x = residual + self.ff_scale * \
+                self.dropout(self.feed_forward_macaron(x))
             if not self.normalize_before:
                 x = self.norm_ff_macaron(x)
-                
+
         # multi-headed self-attention module
         residual = x
         if self.normalize_before:
             x = self.norm_mha(x)
-        x_att, new_att_cache = self.self_attn(x, x, x, mask, pos_emb, att_cache)
+        x_att, new_att_cache = self.self_attn(
+            x, x, x, mask, pos_emb, att_cache)
         x = residual + self.dropout(x_att)
         if not self.normalize_before:
             x = self.norm_mha(x)
-            
+
         # convolution module
         new_cnn_cache = torch.zeros((0, 0, 0), dtype=x.dtype, device=x.device)
         if self.conv_module is not None:
@@ -210,7 +217,7 @@ class ConformerEncoderLayer(nn.Module):
             x = residual + self.dropout(x)
             if not self.normalize_before:
                 x = self.norm_conv(x)
-                
+
         # feed forward module
         residual = x
         if self.normalize_before:
@@ -218,10 +225,10 @@ class ConformerEncoderLayer(nn.Module):
         x = residual + self.ff_scale * self.dropout(self.feed_forward(x))
         if not self.normalize_before:
             x = self.norm_ff(x)
-            
+
         if self.conv_module is not None:
             x = self.norm_final(x)
-            
+
         return x, mask, new_att_cache, new_cnn_cache
 
 
@@ -230,7 +237,8 @@ def make_pad_mask(lengths: torch.Tensor, max_len: int = 0) -> torch.Tensor:
     batch_size = lengths.size(0)
     if max_len == 0:
         max_len = lengths.max().item()
-    seq_range = torch.arange(0, max_len, dtype=torch.long, device=lengths.device)
+    seq_range = torch.arange(
+        0, max_len, dtype=torch.long, device=lengths.device)
     seq_range_expand = seq_range.unsqueeze(0).expand(batch_size, max_len)
     seq_length_expand = lengths.unsqueeze(1).expand_as(seq_range_expand)
     return seq_range_expand >= seq_length_expand
@@ -238,7 +246,7 @@ def make_pad_mask(lengths: torch.Tensor, max_len: int = 0) -> torch.Tensor:
 
 class ConformerEncoder(nn.Module):
     """Conformer编码器"""
-    
+
     def __init__(self, input_size: int, output_size: int = 256, attention_heads: int = 4,
                  linear_units: int = 2048, num_blocks: int = 6, dropout_rate: float = 0.1,
                  positional_dropout_rate: float = 0.1, attention_dropout_rate: float = 0.0,
@@ -248,41 +256,46 @@ class ConformerEncoder(nn.Module):
                  cnn_module_norm: str = "batch_norm", pos_enc_layer_type: str = "rel_pos",
                  static_chunk_size: int = 0, use_dynamic_chunk: bool = False):
         super().__init__()
-        
+
         self._output_size = output_size
-        self.embed = Conv2dSubsampling4(input_size, output_size, positional_dropout_rate)
+        self.embed = Conv2dSubsampling4(
+            input_size, output_size, positional_dropout_rate)
         self.normalize_before = normalize_before
         self.after_norm = nn.LayerNorm(output_size)
         self.static_chunk_size = static_chunk_size
         self.use_dynamic_chunk = use_dynamic_chunk
-        
+
         # 构建编码器层
         activation = nn.SiLU()  # 使用SiLU替代Swish
         self.encoders = nn.ModuleList([
             ConformerEncoderLayer(
                 output_size,
-                MultiHeadedAttention(attention_heads, output_size, attention_dropout_rate),
-                PositionwiseFeedForward(output_size, linear_units, dropout_rate, activation),
-                PositionwiseFeedForward(output_size, linear_units, dropout_rate, activation) if macaron_style else None,
-                ConvolutionModule(output_size, cnn_module_kernel, activation, cnn_module_norm, causal) if use_cnn_module else None,
+                MultiHeadedAttention(
+                    attention_heads, output_size, attention_dropout_rate),
+                PositionwiseFeedForward(
+                    output_size, linear_units, dropout_rate, activation),
+                PositionwiseFeedForward(
+                    output_size, linear_units, dropout_rate, activation) if macaron_style else None,
+                ConvolutionModule(output_size, cnn_module_kernel, activation,
+                                  cnn_module_norm, causal) if use_cnn_module else None,
                 dropout_rate,
                 normalize_before,
             ) for _ in range(num_blocks)
         ])
-        
+
     def output_size(self) -> int:
         return self._output_size
-        
-    def forward(self, xs: torch.Tensor, xs_lens: torch.Tensor, 
+
+    def forward(self, xs: torch.Tensor, xs_lens: torch.Tensor,
                 decoding_chunk_size: int = 0, num_decoding_left_chunks: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
         """编码器前向传播
-        
+
         Args:
             xs: 输入特征 (B, T, D)
             xs_lens: 输入长度 (B,)
             decoding_chunk_size: 解码chunk大小
             num_decoding_left_chunks: 左侧chunk数量
-            
+
         Returns:
             encoder output tensor xs, and subsampled masks
             xs: 编码器输出 (B, T', D)  
@@ -290,16 +303,16 @@ class ConformerEncoder(nn.Module):
         """
         T = xs.size(1)
         masks = ~make_pad_mask(xs_lens, T).unsqueeze(1)  # (B, 1, T)
-        
+
         # 子采样和位置编码
         xs, pos_emb, masks = self.embed(xs, masks)
         mask_pad = masks  # (B, 1, T/subsample_rate)
-        
+
         # 通过编码器层
         for layer in self.encoders:
             xs, masks, _, _ = layer(xs, masks, pos_emb, mask_pad)
-            
+
         if self.normalize_before:
             xs = self.after_norm(xs)
-            
+
         return xs, masks

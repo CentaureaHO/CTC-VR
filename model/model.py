@@ -5,6 +5,7 @@ from typing import Tuple, Union
 from model.subsampling import Subsampling
 import math
 
+
 class PositionalEncoding(torch.nn.Module):
     """Positional encoding.
 
@@ -98,11 +99,12 @@ class PositionalEncoding(torch.nn.Module):
             pos_emb = self.dropout(pos_emb)
         return pos_emb
 
+
 class RelPositionalEncoding(torch.nn.Module):
     def __init__(self,
-                d_model: int,
-                dropout_rate: float,
-                max_len: int = 5000):
+                 d_model: int,
+                 dropout_rate: float,
+                 max_len: int = 5000):
         super().__init__()
         self.d_model = d_model
         self.xscale = math.sqrt(self.d_model)
@@ -110,7 +112,8 @@ class RelPositionalEncoding(torch.nn.Module):
         self.max_len = max_len
 
         self.pe = torch.zeros(self.max_len, self.d_model)
-        position = torch.arange(0, self.max_len, dtype=torch.float32).unsqueeze(1)
+        position = torch.arange(
+            0, self.max_len, dtype=torch.float32).unsqueeze(1)
         div_term = torch.exp(
             torch.arange(0, self.d_model, 2, dtype=torch.float32) *
             -(math.log(10000.0) / self.d_model))
@@ -118,10 +121,11 @@ class RelPositionalEncoding(torch.nn.Module):
         self.pe[:, 1::2] = torch.cos(position * div_term)
 
         self.relative_pe = torch.zeros(2*self.max_len-1, self.d_model)
-        rel_position = torch.arange(-self.max_len+1, self.max_len, dtype=torch.float32).unsqueeze(1)
+        rel_position = torch.arange(-self.max_len+1,
+                                    self.max_len, dtype=torch.float32).unsqueeze(1)
         self.relative_pe[:, 0::2] = torch.sin(rel_position * div_term)
         self.relative_pe[:, 1::2] = torch.cos(rel_position * div_term)
-        
+
         self.register_buffer("pe_buffer", self.pe.unsqueeze(0))
         self.register_buffer("rel_pe_buffer", self.relative_pe)
 
@@ -132,15 +136,16 @@ class RelPositionalEncoding(torch.nn.Module):
             pos_emb = self.pe_buffer[:, offset:offset+seq_len]
         else:
             pos_emb = self.pe_buffer[:, :seq_len]
-        
+
         center = self.max_len - 1
         start = center - seq_len + 1
         end = center + seq_len
         rel_pos_emb = self.rel_pe_buffer[start:end]
-        
+
         x = x * self.xscale + pos_emb
-        
+
         return self.dropout(x), rel_pos_emb
+
 
 class ConformerConvModule(nn.Module):
     def __init__(self, dim, kernel_size=31, expansion_factor=2, dropout=0.1):
@@ -151,18 +156,19 @@ class ConformerConvModule(nn.Module):
         self.layer_norm = nn.LayerNorm(dim)
         self.conv1 = nn.Conv1d(dim, inner_dim, 1)
         self.glu = nn.GLU(dim=1)
-        self.depthwise_conv = nn.Conv1d(dim, dim, kernel_size, padding=padding, groups=dim)
+        self.depthwise_conv = nn.Conv1d(
+            dim, dim, kernel_size, padding=padding, groups=dim)
         self.batch_norm = nn.BatchNorm1d(dim)
         self.activation = nn.SiLU()
         self.conv2 = nn.Conv1d(dim, dim, 1)
         self.dropout = nn.Dropout(dropout)
-    
+
     def forward(self, x):
         # x: [B, T, C]
         residual = x
-        
+
         x = self.layer_norm(x)
-        
+
         x = x.transpose(1, 2)  # [B, C, T]
         x = self.conv1(x)
         x = self.glu(x)
@@ -172,11 +178,12 @@ class ConformerConvModule(nn.Module):
         x = self.conv2(x)
         x = self.dropout(x)
         x = x.transpose(1, 2)  # [B, T, C]
-        
+
         return x + residual
 
+
 class ConformerBlock(nn.Module):
-    def __init__(self, dim, num_heads=8, ff_expansion=4, conv_expansion=2, 
+    def __init__(self, dim, num_heads=8, ff_expansion=4, conv_expansion=2,
                  conv_kernel_size=31, dropout=0.1):
         super().__init__()
 
@@ -186,11 +193,12 @@ class ConformerBlock(nn.Module):
         self.ff1_dropout1 = nn.Dropout(dropout)
         self.ff1_linear2 = nn.Linear(dim * ff_expansion, dim)
         self.ff1_dropout2 = nn.Dropout(dropout)
-        
+
         self.attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout)
         self.attn_norm = nn.LayerNorm(dim)
-        
-        self.conv = ConformerConvModule(dim, conv_kernel_size, conv_expansion, dropout)
+
+        self.conv = ConformerConvModule(
+            dim, conv_kernel_size, conv_expansion, dropout)
 
         self.ff2_norm = nn.LayerNorm(dim)
         self.ff2_linear1 = nn.Linear(dim, dim * ff_expansion)
@@ -198,9 +206,9 @@ class ConformerBlock(nn.Module):
         self.ff2_dropout1 = nn.Dropout(dropout)
         self.ff2_linear2 = nn.Linear(dim * ff_expansion, dim)
         self.ff2_dropout2 = nn.Dropout(dropout)
-        
+
         self.final_norm = nn.LayerNorm(dim)
-    
+
     def forward(self, x):
         # FFN 1
         ff1_out = self.ff1_norm(x)
@@ -210,17 +218,17 @@ class ConformerBlock(nn.Module):
         ff1_out = self.ff1_linear2(ff1_out)
         ff1_out = self.ff1_dropout2(ff1_out)
         x = x + 0.5 * ff1_out
-        
+
         # Self Attention
         residual = x
         x_norm = self.attn_norm(x)
         x_t = x_norm.transpose(0, 1)                # [T, B, C]
         attn_out, _ = self.attn(x_t, x_t, x_t)
         x = residual + attn_out.transpose(0, 1)     # [B, T, C]
-        
+
         # Conv Module
         x = x + self.conv(x)
-        
+
         # FFN 2
         ff2_out = self.ff2_norm(x)
         ff2_out = self.ff2_linear1(ff2_out)
@@ -229,35 +237,37 @@ class ConformerBlock(nn.Module):
         ff2_out = self.ff2_linear2(ff2_out)
         ff2_out = self.ff2_dropout2(ff2_out)
         x = x + 0.5 * ff2_out
-        
+
         return self.final_norm(x)
+
 
 class ConformerEncoder(nn.Module):
     def __init__(self, d_model, num_heads, num_layers, d_ff, dropout=0.1):
         super().__init__()
         self.layers = nn.ModuleList([
             ConformerBlock(
-                dim=d_model, 
-                num_heads=num_heads, 
-                ff_expansion=d_ff // d_model, 
+                dim=d_model,
+                num_heads=num_heads,
+                ff_expansion=d_ff // d_model,
                 dropout=dropout
             ) for _ in range(num_layers)
         ])
-    
+
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
         return x
 
+
 class CTCModel(nn.Module):
     def __init__(self, in_dim, output_size,
                  vocab_size, blank_id
-                ):
+                 ):
         super().__init__()
         self.subsampling = Subsampling(in_dim, output_size, subsampling_type=8)
-        
+
         self.positional_encoding = RelPositionalEncoding(output_size, 0.1)
-        
+
         self.encoder = ConformerEncoder(
             d_model=output_size,
             num_heads=8,
@@ -284,7 +294,7 @@ class CTCModel(nn.Module):
         loss = loss / predict.size(1)
         predict = predict.transpose(0, 1)
         return predict, loss, encoder_out_lens
-    
+
     def inference(self, x, audio_lens):
         x, encoder_out_lens = self.subsampling(x, audio_lens)
         x, _ = self.positional_encoding(x, 0)

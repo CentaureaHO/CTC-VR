@@ -26,7 +26,7 @@ class TransducerJoint(torch.nn.Module):
             self.activation = nn.GELU()
         else:
             self.activation = nn.Tanh()
-            
+
         self.prejoin_linear = prejoin_linear
         self.postjoin_linear = postjoin_linear
         self.joint_mode = joint_mode
@@ -61,7 +61,7 @@ class TransducerJoint(torch.nn.Module):
                 and self.pred_ffn is not None):
             enc_out = self.enc_ffn(enc_out)  # [B,T,E] -> [B,T,D]
             pred_out = self.pred_ffn(pred_out)  # [B,U,P] -> [B,U,D]
-            
+
         if enc_out.ndim != 4:
             enc_out = enc_out.unsqueeze(2)  # [B,T,D] -> [B,T,1,D]
         if pred_out.ndim != 4:

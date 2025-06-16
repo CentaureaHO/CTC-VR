@@ -3,6 +3,8 @@ import random
 import os
 import dataclasses
 import numpy as np
+
+
 def to_device(data, device=None, dtype=None, non_blocking=False, copy=False):
     """Change the device of object recursively"""
     if isinstance(data, dict):
@@ -22,7 +24,8 @@ def to_device(data, device=None, dtype=None, non_blocking=False, copy=False):
         return data.to(device, dtype, non_blocking, copy)
     else:
         return data
-    
+
+
 def collate_with_PAD(batch):
     ids = [data[0] for data in batch]
     audios = [data[1] for data in batch]
@@ -35,7 +38,7 @@ def collate_with_PAD(batch):
 
     audio_features = []
     for audio in audios:
-        l,d = audio.size()
+        l, d = audio.size()
         if l < max_audio_len:
             padding = torch.zeros((max_audio_len - l, d), dtype=torch.float32)
             padded_tensor = torch.cat([audio, padding], dim=0)
@@ -43,7 +46,7 @@ def collate_with_PAD(batch):
         else:
             audio_features.append(audio)
     audio_features = torch.stack(audio_features, dim=0)
-    
+
     # text padding id
     pad_num = 0
     text_features = []
@@ -62,5 +65,5 @@ def collate_with_PAD(batch):
         "texts": text_features,
         "text_lens": text_lens,
     }
-    
+
     return res

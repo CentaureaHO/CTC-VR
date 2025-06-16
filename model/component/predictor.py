@@ -29,10 +29,10 @@ class RNNPredictor(nn.Module):
         self.n_layers = num_layers
         self.hidden_size = hidden_size
         self._output_size = output_size
-        
+
         self.embed = nn.Embedding(voca_size, embed_size)
         self.dropout = nn.Dropout(embed_dropout)
-        
+
         # 直接使用LSTM，移除类注册机制
         self.rnn = nn.LSTM(
             input_size=embed_size,
@@ -61,18 +61,19 @@ class RNNPredictor(nn.Module):
         """
         embed = self.embed(input_tensor)  # [batch, max_time, emb_size]
         embed = self.dropout(embed)
-        
+
         states: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
         if cache is None:
-            state = self.init_state(batch_size=input_tensor.size(0), device=input_tensor.device)
+            state = self.init_state(batch_size=input_tensor.size(
+                0), device=input_tensor.device)
             states = (state[0], state[1])
         else:
             assert len(cache) == 2
             states = (cache[0], cache[1])
-            
+
         out, (m, c) = self.rnn(embed, states)
         out = self.projection(out)
-        
+
         return out
 
     def init_state(
@@ -83,13 +84,15 @@ class RNNPredictor(nn.Module):
     ) -> List[torch.Tensor]:
         assert batch_size > 0
         return [
-            torch.zeros(self.n_layers, batch_size, self.hidden_size, device=device),
-            torch.zeros(self.n_layers, batch_size, self.hidden_size, device=device)
+            torch.zeros(self.n_layers, batch_size,
+                        self.hidden_size, device=device),
+            torch.zeros(self.n_layers, batch_size,
+                        self.hidden_size, device=device)
         ]
 
     def forward_step(
-            self, 
-            input_tensor: torch.Tensor, 
+            self,
+            input_tensor: torch.Tensor,
             padding: torch.Tensor,
             cache: List[torch.Tensor]
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
@@ -101,10 +104,10 @@ class RNNPredictor(nn.Module):
         """
         assert len(cache) == 2
         state_m, state_c = cache[0], cache[1]
-        
+
         # Ensure input is on the same device as the embedding layer's weights
         input_tensor = input_tensor.to(self.embed.weight.device)
-        
+
         embed = self.embed(input_tensor)  # [batch, 1, emb_size]
         embed = self.dropout(embed)
         out, (m, c) = self.rnn(embed, (state_m, state_c))

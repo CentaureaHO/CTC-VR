@@ -7,6 +7,7 @@ from model.component.joint import TransducerJoint
 from model.component.encoder import ConformerEncoder
 from typing import Tuple, Dict, Optional
 
+
 class CTC(torch.nn.Module):
     """CTC module"""
 
@@ -78,12 +79,13 @@ class CTC(torch.nn.Module):
         """
         return torch.argmax(self.ctc_lo(hs_pad), dim=2)
 
+
 class TransducerModel(nn.Module):
-    def __init__(self, input_dim, hidden_dim, vocab_size, blank_id, 
+    def __init__(self, input_dim, hidden_dim, vocab_size, blank_id,
                  streaming=False, static_chunk_size=0, use_dynamic_chunk=False,
                  ctc_weight=0.3):
         super().__init__()
-        
+
         # 编码器
         self.encoder = ConformerEncoder(
             input_size=input_dim,
@@ -105,7 +107,7 @@ class TransducerModel(nn.Module):
             static_chunk_size=static_chunk_size,
             use_dynamic_chunk=use_dynamic_chunk
         )
-        
+
         # 预测器
         self.predictor = Predictor(
             voca_size=vocab_size,
@@ -150,7 +152,7 @@ class TransducerModel(nn.Module):
             ignore_id=-1,
             transducer_weight=1.0-ctc_weight
         )
-        
+
     def forward(self, audios, audio_lens, texts=None, text_lens=None):
         """前向传播"""
         batch = {
@@ -159,9 +161,9 @@ class TransducerModel(nn.Module):
             'target': texts,
             'target_lengths': text_lens
         }
-        
+
         current_device = audios.device
-        
+
         if self.training and texts is not None:
             # 训练模式
             outputs = self.transducer(batch, current_device)
@@ -180,19 +182,19 @@ class TransducerModel(nn.Module):
             else:
                 # 推理模式，进行解码
                 hyps = self.transducer.greedy_search(audios, audio_lens)
-                scores = None 
+                scores = None
                 return hyps, scores, None
 
     def ctc_greedy_search(self, audios, audio_lens):
         """使用CTC进行贪婪搜索解码"""
         encoder_out, encoder_mask = self.encoder(audios, audio_lens)
         encoder_out_lens = encoder_mask.squeeze(1).sum(1)
-        
+
         # CTC解码
         ctc_probs = self.ctc.log_softmax(encoder_out)
         topk_prob, topk_index = ctc_probs.topk(1, dim=2)
         topk_index = topk_index.squeeze(2)
-        
+
         hyps = []
         for b in range(topk_index.size(0)):
             seq_len = encoder_out_lens[b].item()
@@ -204,5 +206,5 @@ class TransducerModel(nn.Module):
                     hyp.append(token)
                 prev_token = token
             hyps.append(hyp)
-        
+
         return hyps
