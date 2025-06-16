@@ -11,6 +11,8 @@ class TransducerModel(nn.Module):
                  streaming=False, static_chunk_size=0, use_dynamic_chunk=False,
                  ctc_weight=0.3):
         super().__init__()
+        
+        # 编码器
         self.encoder = ConformerEncoder(
             input_size=input_dim,
             output_size=hidden_dim,
@@ -28,11 +30,11 @@ class TransducerModel(nn.Module):
             causal=False,
             cnn_module_norm="layer_norm",
             pos_enc_layer_type="rel_pos",
-            # 添加流式训练参数
             static_chunk_size=static_chunk_size,
             use_dynamic_chunk=use_dynamic_chunk
         )
         
+        # 预测器
         self.predictor = Predictor(
             voca_size=vocab_size,
             embed_size=hidden_dim,
@@ -43,6 +45,7 @@ class TransducerModel(nn.Module):
             num_layers=1
         )
 
+        # 联合网络
         self.joint = TransducerJoint(
             vocab_size=vocab_size,
             enc_output_size=hidden_dim,
@@ -54,7 +57,7 @@ class TransducerModel(nn.Module):
             activation='tanh'
         )
 
-        # 添加CTC层
+        # CTC层
         self.ctc = CTC(
             odim=vocab_size,
             encoder_output_size=hidden_dim,
@@ -63,6 +66,7 @@ class TransducerModel(nn.Module):
             blank_id=blank_id
         )
 
+        # Transducer模型
         self.transducer = Transducer(
             vocab_size=vocab_size,
             blank=blank_id,
@@ -76,6 +80,7 @@ class TransducerModel(nn.Module):
         )
         
     def forward(self, audios, audio_lens, texts=None, text_lens=None):
+        """前向传播"""
         batch = {
             'feats': audios,
             'feats_lengths': audio_lens,
@@ -86,6 +91,7 @@ class TransducerModel(nn.Module):
         current_device = audios.device
         
         if self.training and texts is not None:
+            # 训练模式
             outputs = self.transducer(batch, current_device)
             loss = outputs['loss']
             loss_ctc = outputs.get('loss_ctc', None)
@@ -93,12 +99,14 @@ class TransducerModel(nn.Module):
             return None, loss, {'loss_ctc': loss_ctc, 'loss_rnnt': loss_rnnt}
         else:
             if texts is not None:
+                # 验证模式，计算损失
                 outputs = self.transducer(batch, current_device)
                 loss = outputs['loss']
                 loss_ctc = outputs.get('loss_ctc', None)
                 loss_rnnt = outputs.get('loss_rnnt', None)
                 return None, loss, {'loss_ctc': loss_ctc, 'loss_rnnt': loss_rnnt}
             else:
+                # 推理模式，进行解码
                 hyps = self.transducer.greedy_search(audios, audio_lens)
                 scores = None 
                 return hyps, scores, None
