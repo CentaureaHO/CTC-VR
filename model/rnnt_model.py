@@ -6,7 +6,8 @@ from wenet.transducer.joint import TransducerJoint
 from wenet.transformer.encoder import ConformerEncoder
 
 class TransducerModel(nn.Module):
-    def __init__(self, input_dim, hidden_dim, vocab_size, blank_id):
+    def __init__(self, input_dim, hidden_dim, vocab_size, blank_id, 
+                 streaming=False, static_chunk_size=0, use_dynamic_chunk=False):
         super().__init__()
         self.encoder = ConformerEncoder(
             input_size=input_dim,
@@ -24,7 +25,10 @@ class TransducerModel(nn.Module):
             cnn_module_kernel=31,
             causal=False,
             cnn_module_norm="layer_norm",
-            pos_enc_layer_type="rel_pos"
+            pos_enc_layer_type="rel_pos",
+            # 添加流式训练参数
+            static_chunk_size=static_chunk_size,
+            use_dynamic_chunk=use_dynamic_chunk
         )
         
         self.predictor = Predictor(
