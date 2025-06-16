@@ -80,7 +80,7 @@ def compare_results(stream_result, offline_result):
 
 def main():
     parser = argparse.ArgumentParser(description="RNNT流式与离线识别对比")
-    parser.add_argument("--model", type=str, default="./model_history/rnnt/model.pt", 
+    parser.add_argument("--model", type=str, default="./model.pt", 
                         help="模型路径")
     parser.add_argument("--audio", type=str, default="dataset/Wave/000020.wav", 
                         help="音频文件路径")
