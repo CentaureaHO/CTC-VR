@@ -1,6 +1,6 @@
 from data.dataloader import get_dataloader
 from tokenizer.tokenizer import Tokenizer
-from model.model import CTCModel
+from model.rnnt import Transducer, RNNPredictor, TransducerJoint, StreamingEncoder
 import torch
 from utils.utils import to_device
 import time
@@ -12,22 +12,69 @@ import math
 import numpy as np
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-epochs = 50
+epochs = 100
 accum_steps = 1
 grad_clip = 1.0
 
-log_dir = "/root/tf-logs/speech-recognition-conformer"
-# log_dir = "./speech-recognition"
+log_dir = "/root/tf-logs/speech-recognition-rnnt"
 os.makedirs(log_dir, exist_ok=True)
 writer = SummaryWriter(log_dir)
 
 log_file = "./log.txt"
 if not os.path.exists(log_file):
     with open(log_file, 'w') as f:
-        f.write("训练日志\n")
+        f.write("RNNT训练日志\n")
 
 tokenizer = Tokenizer()
-model = CTCModel(80, 256, tokenizer.size(), tokenizer.blk_id()).to(device)
+vocab_size = tokenizer.size()
+blank_id = tokenizer.blk_id()
+
+input_dim = 80          # 特征维度
+enc_hidden_dim = 256    # 编码器隐藏层大小
+enc_output_dim = 256    # 编码器输出维度
+pred_hidden_dim = 320   # 预测器隐藏层大小
+pred_output_dim = 320   # 预测器输出维度
+joint_dim = 320         # 联合网络维度
+rnn_layers = 2          # RNN层数
+
+encoder = StreamingEncoder(
+    input_size=input_dim,
+    hidden_size=enc_hidden_dim,
+    output_size=enc_output_dim,
+    num_layers=rnn_layers,
+    dropout=0.1,
+    bidirectional=False
+)
+
+predictor = RNNPredictor(
+    voca_size=vocab_size,
+    embed_size=256,
+    output_size=pred_output_dim,
+    embed_dropout=0.1,
+    hidden_size=pred_hidden_dim,
+    num_layers=rnn_layers,
+    rnn_type="lstm"
+)
+
+joint = TransducerJoint(
+    vocab_size=vocab_size,
+    enc_output_size=enc_output_dim,
+    pred_output_size=pred_output_dim,
+    join_dim=joint_dim,
+    prejoin_linear=True,
+    postjoin_linear=False,
+    joint_mode='add'
+)
+
+model = Transducer(
+    vocab_size=vocab_size,
+    blank=blank_id,
+    encoder=encoder,
+    predictor=predictor,
+    joint=joint,
+    ignore_id=-1,
+    transducer_weight=1.0,
+).to(device)
 
 initial_lr = 0.0001
 optim = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
@@ -48,12 +95,14 @@ test_dataloader = get_dataloader("./dataset/split/test/wav.scp", "./dataset/spli
 print(f'Using device: {device}')
 
 def check_nan_inf(tensor, name="tensor"):
+    """检查张量是否包含NaN或Inf值"""
     if torch.isnan(tensor).any() or torch.isinf(tensor).any():
         print(f"警告: {name} 包含 NaN 或 Inf 值")
         return True
     return False
 
 def log_gradient_stats(model):
+    """记录梯度统计信息"""
     for name, param in model.named_parameters():
         if param.grad is not None:
             grad = param.grad
@@ -78,7 +127,8 @@ for epoch in range(epochs):
             continue
             
         try:
-            predict, loss, _ = model(audios, audio_lens, texts, text_lens)
+            loss_dict = model(audios, audio_lens, texts, text_lens)
+            loss = loss_dict['loss']
 
             if torch.isnan(loss).any() or torch.isinf(loss).any():
                 print(f"警告: 第 {i+1} 批次的损失为 NaN 或 Inf，跳过该批次")
@@ -122,7 +172,7 @@ for epoch in range(epochs):
         writer.add_scalar('train/learning_rate', lr, global_step)
 
         if (i+1) % (accum_steps*10) == 0:
-            with open("./log.txt", 'a', encoding='utf-8') as f:
+            with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(f"{epoch}:{i+1}  {total_loss/(i+1)}  {lr}\n")
    
     epoch_loss = total_loss / len(train_dataloader)
@@ -137,7 +187,10 @@ for epoch in range(epochs):
             audio_lens = input['audio_lens']
             texts = input['texts']
             text_lens = input['text_lens']
-            predict, loss, _ = model(audios, audio_lens, texts, text_lens)
+            
+            loss_dict = model(audios, audio_lens, texts, text_lens)
+            loss = loss_dict['loss']
+            
             test_loss += loss.item()
             test_progress.set_postfix({'test_loss': f'{test_loss/(i+1):.4f}'})
     
@@ -160,11 +213,11 @@ for epoch in range(epochs):
     }
     
     if (epoch + 1) % 5 == 0 or epoch == epochs - 1:
-        model_path = f"./models/model_epoch_{epoch+1}.pt"
+        model_path = f"./models/rnnt_model_epoch_{epoch+1}.pt"
         os.makedirs("./models", exist_ok=True)
         torch.save(dict1, model_path)
     
-    latest_model_path = "./model.pt"
+    latest_model_path = "./rnnt_model.pt"
     torch.save(dict1, latest_model_path)
 
 writer.close()
