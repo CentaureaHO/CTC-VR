@@ -29,6 +29,10 @@ def main():
     parser.add_argument("--num_decoding_left_chunks", type=int, default=5, 
                         help="解码时使用的左侧块数")
     
+    # 添加CTC权重参数
+    parser.add_argument("--ctc_weight", type=float, default=0.3,
+                        help="CTC损失权重，RNNT权重为1-ctc_weight")
+    
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", 
                         help="训练设备")
     parser.add_argument("--log_dir", type=str, default="/root/tf-logs/speech-recognition-rnnt", 
@@ -59,11 +63,14 @@ def main():
         blank_id=blank_id,
         streaming=args.streaming,
         static_chunk_size=args.static_chunk_size if args.streaming else 0,
-        use_dynamic_chunk=args.use_dynamic_chunk if args.streaming else False
+        use_dynamic_chunk=args.use_dynamic_chunk if args.streaming else False,
+        ctc_weight=args.ctc_weight
     ).to(device)
     
     print(f"模型配置:")
     print(f"  - 使用流式训练: {args.streaming}")
+    print(f"  - CTC权重: {args.ctc_weight}")
+    print(f"  - RNNT权重: {1.0 - args.ctc_weight}")
     if args.streaming:
         print(f"  - 静态块大小: {args.static_chunk_size}")
         print(f"  - 使用动态块: {args.use_dynamic_chunk}")
@@ -120,7 +127,7 @@ def main():
                 continue
             
             try:
-                _, loss, _ = model(audios, audio_lens, texts, text_lens)
+                _, loss, loss_dict = model(audios, audio_lens, texts, text_lens)
 
                 if torch.isnan(loss).any() or torch.isinf(loss).any():
                     print(f"警告: 第 {i+1} 批次的损失为 NaN 或 Inf，跳过该批次")    
@@ -129,6 +136,13 @@ def main():
                 loss = loss / accum_steps
                 total_loss += loss.item()
                 loss.backward()
+
+                # 记录详细损失信息
+                if loss_dict and (i+1) % 50 == 0:
+                    if loss_dict.get('loss_ctc') is not None:
+                        print(f"  CTC损失: {loss_dict['loss_ctc'].item():.4f}")
+                    if loss_dict.get('loss_rnnt') is not None:
+                        print(f"  RNNT损失: {loss_dict['loss_rnnt'].item():.4f}")
 
                 if (i+1) % 50 == 0:
                     log_gradient_stats(model)

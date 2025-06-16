@@ -26,7 +26,7 @@ def remove_adjacent_duplicates(tokens):
     
     return result
 
-def load_model(model_path, device):
+def load_model(model_path, device, ctc_weight=0.3):
     checkpoint = torch.load(model_path, map_location=device)
     
     tokenizer = Tokenizer()
@@ -40,7 +40,8 @@ def load_model(model_path, device):
         blank_id=blank_id,
         streaming=True,
         static_chunk_size=0,
-        use_dynamic_chunk=True
+        use_dynamic_chunk=True,
+        ctc_weight=ctc_weight
     ).to(device)
     
     model.load_state_dict(checkpoint["model"])
@@ -59,19 +60,22 @@ def simulate_streaming(audio_features, chunk_size=16, context=5):
         
         yield chunk, (i == num_chunks-1)
 
-def offline_recognition(model, audio_features, device):
+def offline_recognition(model, audio_features, device, use_ctc=False):
     with torch.no_grad():
         features = audio_features.unsqueeze(0).to(device)
         feature_lens = torch.tensor([features.size(1)], device=device)
 
-        hyps = model.transducer.greedy_search(
-            features,
-            feature_lens,
-            decoding_chunk_size=-1,
-            simulate_streaming=False
-        )
-        
-        return hyps[0] if len(hyps) > 0 else []
+        if use_ctc:
+            hyps = model.ctc_greedy_search(features, feature_lens)
+            return hyps[0] if len(hyps) > 0 else []
+        else:
+            hyps = model.transducer.greedy_search(
+                features,
+                feature_lens,
+                decoding_chunk_size=-1,
+                simulate_streaming=False
+            )
+            return hyps[0] if len(hyps) > 0 else []
 
 def compare_results(stream_result, offline_result):
     stream_text = ' '.join(stream_result)
@@ -107,19 +111,24 @@ def main():
                         help="流式处理的块大小")
     parser.add_argument("--num_left_chunks", type=int, default=5,
                         help="解码时使用的左侧块数")
+    parser.add_argument("--use_ctc", action="store_true",
+                        help="使用CTC解码")
+    parser.add_argument("--ctc_weight", type=float, default=0.3,
+                        help="CTC权重")
     
     args = parser.parse_args()
     device = torch.device(args.device)
 
     print(f"加载模型: {args.model}")
-    model, tokenizer = load_model(args.model, device)
+    model, tokenizer = load_model(args.model, device, args.ctc_weight)
 
     print(f"处理音频: {args.audio}")
     audio_features = extract_audio_features(args.audio)
 
-    print("执行离线识别...")
+    decode_method = "CTC" if args.use_ctc else "RNNT"
+    print(f"执行离线识别 ({decode_method})...")
     offline_start_time = time.time()
-    offline_hyps = offline_recognition(model, audio_features, device)
+    offline_hyps = offline_recognition(model, audio_features, device, args.use_ctc)
     offline_tokens = [tokenizer.id2token[id] for id in offline_hyps]
     offline_result = ' '.join(offline_tokens)
     offline_time = time.time() - offline_start_time

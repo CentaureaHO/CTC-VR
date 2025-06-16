@@ -4,10 +4,12 @@ from wenet.transducer.transducer import Transducer
 from wenet.transducer.predictor import RNNPredictor as Predictor
 from wenet.transducer.joint import TransducerJoint
 from wenet.transformer.encoder import ConformerEncoder
+from wenet.transformer.ctc import CTC
 
 class TransducerModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, vocab_size, blank_id, 
-                 streaming=False, static_chunk_size=0, use_dynamic_chunk=False):
+                 streaming=False, static_chunk_size=0, use_dynamic_chunk=False,
+                 ctc_weight=0.3):
         super().__init__()
         self.encoder = ConformerEncoder(
             input_size=input_dim,
@@ -52,16 +54,25 @@ class TransducerModel(nn.Module):
             activation='tanh'
         )
 
+        # 添加CTC层
+        self.ctc = CTC(
+            odim=vocab_size,
+            encoder_output_size=hidden_dim,
+            dropout_rate=0.1,
+            reduce=True,
+            blank_id=blank_id
+        )
+
         self.transducer = Transducer(
             vocab_size=vocab_size,
             blank=blank_id,
             encoder=self.encoder,
             predictor=self.predictor,
             joint=self.joint,
-            ctc=None,
-            ctc_weight=0.0,
+            ctc=self.ctc,
+            ctc_weight=ctc_weight,
             ignore_id=-1,
-            transducer_weight=1.0
+            transducer_weight=1.0-ctc_weight
         )
         
     def forward(self, audios, audio_lens, texts=None, text_lens=None):
@@ -77,14 +88,41 @@ class TransducerModel(nn.Module):
         if self.training and texts is not None:
             outputs = self.transducer(batch, current_device)
             loss = outputs['loss']
-            return None, loss, None
+            loss_ctc = outputs.get('loss_ctc', None)
+            loss_rnnt = outputs.get('loss_rnnt', None)
+            return None, loss, {'loss_ctc': loss_ctc, 'loss_rnnt': loss_rnnt}
         else:
             if texts is not None:
                 outputs = self.transducer(batch, current_device)
                 loss = outputs['loss']
-                
-                return None, loss, None
+                loss_ctc = outputs.get('loss_ctc', None)
+                loss_rnnt = outputs.get('loss_rnnt', None)
+                return None, loss, {'loss_ctc': loss_ctc, 'loss_rnnt': loss_rnnt}
             else:
                 hyps = self.transducer.greedy_search(audios, audio_lens)
                 scores = None 
                 return hyps, scores, None
+
+    def ctc_greedy_search(self, audios, audio_lens):
+        """使用CTC进行贪婪搜索解码"""
+        encoder_out, encoder_mask = self.encoder(audios, audio_lens)
+        encoder_out_lens = encoder_mask.squeeze(1).sum(1)
+        
+        # CTC解码
+        ctc_probs = self.ctc.log_softmax(encoder_out)
+        topk_prob, topk_index = ctc_probs.topk(1, dim=2)
+        topk_index = topk_index.squeeze(2)
+        
+        hyps = []
+        for b in range(topk_index.size(0)):
+            seq_len = encoder_out_lens[b].item()
+            hyp = []
+            prev_token = -1
+            for t in range(seq_len):
+                token = topk_index[b, t].item()
+                if token != self.transducer.blank and token != prev_token:
+                    hyp.append(token)
+                prev_token = token
+            hyps.append(hyp)
+        
+        return hyps

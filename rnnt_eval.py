@@ -54,7 +54,7 @@ def calculate_cer(pre_tokens: list, gt_tokens: list) -> tuple:
     cer = (S + D + I) / N if N != 0 else 0.0
     return cer, S, D, I, N
 
-def evaluate_model(dataloader, model, tokenizer, device='cpu', output_file=None):
+def evaluate_model(dataloader, model, tokenizer, device='cpu', output_file=None, use_ctc=False):
     all_refs = []
     all_hyps = []
     
@@ -78,8 +78,14 @@ def evaluate_model(dataloader, model, tokenizer, device='cpu', output_file=None)
                 single_text = texts[j:j+1]
                 single_text_len = text_lens[j:j+1]
 
-                hyps_batch, _, _ = model(single_audio, single_audio_len)
-                hyp = hyps_batch[0] if hyps_batch and len(hyps_batch) > 0 else []
+                if use_ctc:
+                    # 使用CTC解码
+                    hyps_batch = model.ctc_greedy_search(single_audio, single_audio_len)
+                    hyp = hyps_batch[0] if hyps_batch and len(hyps_batch) > 0 else []
+                else:
+                    # 使用RNNT解码
+                    hyps_batch, _, _ = model(single_audio, single_audio_len)
+                    hyp = hyps_batch[0] if hyps_batch and len(hyps_batch) > 0 else []
 
                 ref = single_text[0, :single_text_len[0]].cpu().tolist()
                 all_refs.append(ref)
@@ -120,9 +126,11 @@ def main():
     parser = argparse.ArgumentParser(description="评估RNNT模型性能")
     parser.add_argument("--model_path", type=str, default="./model.pt", help="模型路径")
     parser.add_argument("--dataset", type=str, default="dev", choices=["dev", "test"], help="评估数据集 (dev 或 test)")
-    parser.add_argument("--batch_size", type=int, default=32, help="数据加载批大小 (评估时仍会逐条解码)") # 虽然dataloader可以设置batch_size，但评估时通常逐条解码
+    parser.add_argument("--batch_size", type=int, default=32, help="数据加载批大小 (评估时仍会逐条解码)")
     parser.add_argument("--output", type=str, default=None, help="结果输出文件路径 (例如: ./eval_results.txt)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="计算设备 (cuda 或 cpu)")
+    parser.add_argument("--use_ctc", action="store_true", help="使用CTC解码而不是RNNT解码")
+    parser.add_argument("--ctc_weight", type=float, default=0.3, help="CTC权重（需要与训练时一致）")
     args = parser.parse_args()
     
     tokenizer_instance = Tokenizer()
@@ -137,7 +145,12 @@ def main():
     )
     
     current_device = torch.device(args.device)
-    model = TransducerModel(80, 256, tokenizer_instance.size(), tokenizer_instance.blk_id()).to(current_device)
+    model = TransducerModel(
+        80, 256, 
+        tokenizer_instance.size(), 
+        tokenizer_instance.blk_id(),
+        ctc_weight=args.ctc_weight
+    ).to(current_device)
     
     if not os.path.exists(args.model_path):
         print(f"错误: 模型文件 {args.model_path} 未找到。")
@@ -147,8 +160,11 @@ def main():
     model.load_state_dict(checkpoint['model'])
     print(f"模型已从 {args.model_path} 加载，训练轮次: {checkpoint.get('epoch', -1)+1}")
     
-    cer = evaluate_model(dataloader, model, tokenizer_instance, current_device, args.output)
-    print(f"最终CER ({args.dataset}集): {cer:.4f}")
+    decode_method = "CTC" if args.use_ctc else "RNNT"
+    print(f"使用 {decode_method} 解码方法")
+    
+    cer = evaluate_model(dataloader, model, tokenizer_instance, current_device, args.output, args.use_ctc)
+    print(f"最终CER ({args.dataset}集, {decode_method}): {cer:.4f}")
 
 if __name__ == "__main__":
     main()
