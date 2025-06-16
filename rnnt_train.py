@@ -22,14 +22,13 @@ def main():
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
     
     parser.add_argument("--streaming", action="store_true", help="是否使用流式训练")
-    parser.add_argument("--static_chunk_size", type=int, default=16, 
-                        help="静态块大小，大于0时启用静态块训练")
+    parser.add_argument("--static_chunk_size", type=int, default=20, 
+                        help="静态块大小，推荐16-32，越小延迟越低但可能影响精度")
     parser.add_argument("--use_dynamic_chunk", action="store_true", 
-                        help="是否使用动态块训练")
-    parser.add_argument("--num_decoding_left_chunks", type=int, default=5, 
-                        help="解码时使用的左侧块数")
+                        help="是否使用动态块训练，提高模型鲁棒性")
+    parser.add_argument("--num_decoding_left_chunks", type=int, default=4, 
+                        help="解码时使用的左侧块数，推荐4-8，影响历史信息利用")
     
-    # 添加CTC权重参数
     parser.add_argument("--ctc_weight", type=float, default=0.3,
                         help="CTC损失权重，RNNT权重为1-ctc_weight")
     
@@ -112,9 +111,11 @@ def main():
     for epoch in range(epochs):
         print(f"\n第 {epoch+1}/{epochs} 轮RNNT训练")
         total_loss = 0.0
+        total_ctc_loss = 0.0
+        total_rnnt_loss = 0.0
         model.train()
 
-        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}", ncols=100)
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}", ncols=120)
         
         for i, input in enumerate(progress_bar):
             input = to_device(input, device)
@@ -135,14 +136,15 @@ def main():
                 
                 loss = loss / accum_steps
                 total_loss += loss.item()
-                loss.backward()
-
-                # 记录详细损失信息
-                if loss_dict and (i+1) % 50 == 0:
+                
+                # 累积详细损失信息
+                if loss_dict:
                     if loss_dict.get('loss_ctc') is not None:
-                        print(f"  CTC损失: {loss_dict['loss_ctc'].item():.4f}")
+                        total_ctc_loss += loss_dict['loss_ctc'].item()
                     if loss_dict.get('loss_rnnt') is not None:
-                        print(f"  RNNT损失: {loss_dict['loss_rnnt'].item():.4f}")
+                        total_rnnt_loss += loss_dict['loss_rnnt'].item()
+                
+                loss.backward()
 
                 if (i+1) % 50 == 0:
                     log_gradient_stats(model)
@@ -169,15 +171,31 @@ def main():
 
             lr = optim.state_dict()['param_groups'][0]['lr']                
             avg_loss = total_loss/(i+1)
-            progress_bar.set_postfix({
+            avg_ctc_loss = total_ctc_loss/(i+1) if total_ctc_loss > 0 else 0
+            avg_rnnt_loss = total_rnnt_loss/(i+1) if total_rnnt_loss > 0 else 0
+            
+            # 更新tqdm进度条显示
+            postfix_dict = {
                 'loss': f'{avg_loss:.4f}',
                 'lr': f'{lr:.6f}'
-            })
+            }
+            if avg_ctc_loss > 0:
+                postfix_dict['ctc'] = f'{avg_ctc_loss:.4f}'
+            if avg_rnnt_loss > 0:
+                postfix_dict['rnnt'] = f'{avg_rnnt_loss:.4f}'
+            
+            progress_bar.set_postfix(postfix_dict)
 
             global_step = epoch * len(train_dataloader) + i
 
             writer.add_scalar('train/loss', loss.item(), global_step)
             writer.add_scalar('train/learning_rate', lr, global_step)
+            
+            if loss_dict:
+                if loss_dict.get('loss_ctc') is not None:
+                    writer.add_scalar('train/loss_ctc', loss_dict['loss_ctc'].item(), global_step)
+                if loss_dict.get('loss_rnnt') is not None:
+                    writer.add_scalar('train/loss_rnnt', loss_dict['loss_rnnt'].item(), global_step)
         
         epoch_loss = total_loss / len(train_dataloader)
         

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from model.component.transducer import Transducer
 from model.component.predictor import RNNPredictor as Predictor
 from model.component.joint import TransducerJoint
-from wenet.transformer.encoder import ConformerEncoder
+from model.component.encoder import ConformerEncoder
 from typing import Tuple, Dict, Optional
 
 class CTC(torch.nn.Module):
@@ -100,7 +100,7 @@ class TransducerModel(nn.Module):
             use_cnn_module=True,
             cnn_module_kernel=31,
             causal=False,
-            cnn_module_norm="layer_norm",
+            cnn_module_norm="batch_norm",
             pos_enc_layer_type="rel_pos",
             static_chunk_size=static_chunk_size,
             use_dynamic_chunk=use_dynamic_chunk
