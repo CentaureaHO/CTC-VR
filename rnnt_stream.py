@@ -9,6 +9,23 @@ import numpy as np
 from tqdm import tqdm
 import difflib
 
+def remove_adjacent_duplicates(tokens):
+    """
+    暂时无法解决重复的token
+    遂采用去重
+    大部分场景下应该没有叠词
+    吧
+    """
+    if not tokens:
+        return tokens
+    
+    result = [tokens[0]]
+    for i in range(1, len(tokens)):
+        if tokens[i] != tokens[i-1]:
+            result.append(tokens[i])
+    
+    return result
+
 def load_model(model_path, device):
     checkpoint = torch.load(model_path, map_location=device)
     
@@ -116,7 +133,7 @@ def main():
     streaming_feature = []
     current_result = []
     
-    for chunk, is_final in tqdm(simulate_streaming(audio_features, args.chunk_size)):
+    for chunk, is_final in simulate_streaming(audio_features, args.chunk_size):
         chunk = chunk.to(device)
         
         streaming_feature.append(chunk)
@@ -134,14 +151,16 @@ def main():
             
             if len(hyps) > 0:
                 partial_result = [tokenizer.id2token[id] for id in hyps[0]]
+                partial_result = remove_adjacent_duplicates(partial_result)
                 current_result = partial_result
 
                 if not is_final:
-                    print(f"部分识别结果: {' '.join(partial_result)}", end="\r")
+                    print(f"部分识别结果: {' '.join(partial_result)}", end="\n")
     
     stream_time = time.time() - stream_start_time
     
     if len(current_result) > 0:
+        current_result = remove_adjacent_duplicates(current_result)
         stream_result = ' '.join(current_result)
         print(f"\n流式识别结果: {stream_result}")
     else:
