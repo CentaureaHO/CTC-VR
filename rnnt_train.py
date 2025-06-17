@@ -9,48 +9,22 @@ from tqdm import tqdm
 import os
 import time
 import numpy as np
-import argparse
 from model.rnnt_model import TransducerModel
+from rnnt_common import Config
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RNNT模型训练")
-    parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=32, help="批大小")
-    parser.add_argument("--lr", type=float, default=0.0001, help="初始学习率")
-    parser.add_argument("--hidden_dim", type=int, default=256, help="隐藏层维度")
-    parser.add_argument("--accum_steps", type=int, default=1, help="梯度累积步数")
-    parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
+    device = torch.device(Config.device)
+    epochs = Config.epochs
+    accum_steps = Config.accum_steps
+    grad_clip = Config.grad_clip
 
-    parser.add_argument("--streaming", action="store_true", help="是否使用流式训练")
-    parser.add_argument("--static_chunk_size", type=int, default=20,
-                        help="静态块大小，推荐16-32，越小延迟越低但可能影响精度")
-    parser.add_argument("--use_dynamic_chunk", action="store_true",
-                        help="是否使用动态块训练，提高模型鲁棒性")
-    parser.add_argument("--num_decoding_left_chunks", type=int, default=4,
-                        help="解码时使用的左侧块数，推荐4-8，影响历史信息利用")
+    Config.print_config()
 
-    parser.add_argument("--ctc_weight", type=float, default=0.3,
-                        help="CTC损失权重，RNNT权重为1-ctc_weight")
+    os.makedirs(Config.log_dir, exist_ok=True)
+    writer = SummaryWriter(Config.log_dir)
 
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
-                        help="训练设备")
-    parser.add_argument("--log_dir", type=str, default="/root/tf-logs/speech-recognition-rnnt",
-                        help="TensorBoard日志目录")
-    parser.add_argument("--save_dir", type=str, default="./models",
-                        help="模型保存目录")
-
-    args = parser.parse_args()
-
-    device = torch.device(args.device)
-    epochs = args.epochs
-    accum_steps = args.accum_steps
-    grad_clip = args.grad_clip
-
-    os.makedirs(args.log_dir, exist_ok=True)
-    writer = SummaryWriter(args.log_dir)
-
-    os.makedirs(args.save_dir, exist_ok=True)
+    os.makedirs(Config.save_dir, exist_ok=True)
 
     tokenizer = Tokenizer()
     vocab_size = tokenizer.size()
@@ -58,25 +32,16 @@ def main():
 
     model = TransducerModel(
         input_dim=80,
-        hidden_dim=args.hidden_dim,
+        hidden_dim=Config.hidden_dim,
         vocab_size=vocab_size,
         blank_id=blank_id,
-        streaming=args.streaming,
-        static_chunk_size=args.static_chunk_size if args.streaming else 0,
-        use_dynamic_chunk=args.use_dynamic_chunk if args.streaming else False,
-        ctc_weight=args.ctc_weight
+        streaming=Config.streaming,
+        static_chunk_size=Config.static_chunk_size if Config.streaming else 0,
+        use_dynamic_chunk=Config.use_dynamic_chunk if Config.streaming else False,
+        ctc_weight=Config.ctc_weight
     ).to(device)
 
-    print(f"模型配置:")
-    print(f"  - 使用流式训练: {args.streaming}")
-    print(f"  - CTC权重: {args.ctc_weight}")
-    print(f"  - RNNT权重: {1.0 - args.ctc_weight}")
-    if args.streaming:
-        print(f"  - 静态块大小: {args.static_chunk_size}")
-        print(f"  - 使用动态块: {args.use_dynamic_chunk}")
-        print(f"  - 左侧块数: {args.num_decoding_left_chunks}")
-
-    initial_lr = args.lr
+    initial_lr = Config.lr
     optim = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
                              lr=initial_lr, betas=[0.9, 0.98], eps=1.0e-9,
                              weight_decay=1.0e-4, amsgrad=True)
@@ -90,10 +55,10 @@ def main():
             return min(1.0, step / warmup_steps)
         return 1.0
 
-    train_dataloader = get_dataloader("./dataset/split/train/wav.scp", "./dataset/split/train/pinyin",
-                                      args.batch_size, tokenizer, shuffle=True)
-    test_dataloader = get_dataloader("./dataset/split/test/wav.scp", "./dataset/split/test/pinyin",
-                                     args.batch_size, tokenizer, shuffle=False)
+    train_dataloader = get_dataloader(Config.train_wav_scp, Config.train_text,
+                                      Config.batch_size, tokenizer, shuffle=True)
+    test_dataloader = get_dataloader(Config.test_wav_scp, Config.test_text,
+                                     Config.batch_size, tokenizer, shuffle=False)
 
     print(f'使用设备: {device}')
 
@@ -242,8 +207,8 @@ def main():
         }
 
         if (epoch + 1) % 5 == 0 or epoch == epochs - 1:
-            model_path = f"./models/model_epoch_{epoch+1}.pt"
-            os.makedirs("./models", exist_ok=True)
+            model_path = f"{Config.save_dir}/model_epoch_{epoch+1}.pt"
+            os.makedirs(Config.save_dir, exist_ok=True)
             torch.save(dict1, model_path)
 
         latest_model_path = "./model.pt"
