@@ -33,14 +33,17 @@ def basic_greedy_search(
         time_len = encoder_out_lens[b].item()
         enc_out_b = encoder_out[b:b+1, :time_len, :]  # [1, time_len, D]
 
-        predictor_cache = model.predictor.init_state(1, device=encoder_out.device)
-        prev_out_token = torch.tensor([[model.blank]], device=encoder_out.device, dtype=torch.long)
+        predictor_cache = model.predictor.init_state(
+            1, device=encoder_out.device)
+        prev_out_token = torch.tensor(
+            [[model.blank_id]], device=encoder_out.device, dtype=torch.long)
 
         for t in range(time_len):
             enc_out_t = enc_out_b[:, t:t+1, :]  # [1, 1, D] (当前时间步的编码器输出)
 
             for _ in range(n_steps):
-                padding_for_step = torch.zeros_like(prev_out_token, device=prev_out_token.device)
+                padding_for_step = torch.zeros_like(
+                    prev_out_token, device=prev_out_token.device)
 
                 pred_out_u, new_predictor_cache = model.predictor.forward_step(
                     prev_out_token,
@@ -54,11 +57,12 @@ def basic_greedy_search(
 
                 current_token_id = torch.argmax(log_probs).item()
 
-                if current_token_id == model.blank:
+                if current_token_id == model.blank_id:
                     break
                 else:
                     hyp.append(current_token_id)
-                    prev_out_token = torch.tensor([[current_token_id]], device=encoder_out.device, dtype=torch.long)
+                    prev_out_token = torch.tensor(
+                        [[current_token_id]], device=encoder_out.device, dtype=torch.long)
                     predictor_cache = new_predictor_cache
 
         hyps.append(hyp)

@@ -33,7 +33,6 @@ def main():
     vocab_size = tokenizer.size()
     blank_id = tokenizer.blk_id()
 
-    # 使用在线RNNT模型
     model = OnlineRNNTModel(
         input_dim=80,
         hidden_dim=Config.hidden_dim,
@@ -42,7 +41,12 @@ def main():
         streaming=Config.streaming,
         static_chunk_size=Config.static_chunk_size,
         use_dynamic_chunk=Config.use_dynamic_chunk,
-        ctc_weight=Config.ctc_weight
+        ctc_weight=Config.ctc_weight,
+        predictor_layers=Config.predictor_layers,
+        predictor_dropout=Config.predictor_dropout,
+        ctc_dropout_rate=Config.ctc_dropout_rate,
+        rnnt_loss_clamp=Config.rnnt_loss_clamp,
+        ignore_id=Config.ignore_id
     ).to(device)
 
     print(f"在线RNNT模型配置:")
@@ -84,7 +88,8 @@ def main():
             if param.grad is not None:
                 grad = param.grad
                 if check_nan_inf(grad, f"梯度 {name}"):
-                    print(f"参数 {name} 的梯度统计: min={grad.min().item()}, max={grad.max().item()}, mean={grad.mean().item()}")
+                    print(
+                        f"参数 {name} 的梯度统计: min={grad.min().item()}, max={grad.max().item()}, mean={grad.mean().item()}")
 
     for epoch in range(epochs):
         print(f"\n第 {epoch+1}/{epochs} 轮在线RNNT训练")
@@ -93,7 +98,8 @@ def main():
         total_rnnt_loss = 0.0
         model.train()
 
-        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}", ncols=120)
+        progress_bar = tqdm(
+            train_dataloader, desc=f"Epoch {epoch+1}", ncols=120)
 
         for i, input in enumerate(progress_bar):
             input = to_device(input, device)
@@ -106,7 +112,8 @@ def main():
                 continue
 
             try:
-                _, loss, loss_dict = model(audios, audio_lens, texts, text_lens)
+                _, loss, loss_dict = model(
+                    audios, audio_lens, texts, text_lens)
 
                 if torch.isnan(loss).any() or torch.isinf(loss).any():
                     print(f"警告: 第 {i+1} 批次的损失为 NaN 或 Inf，跳过该批次")
@@ -115,12 +122,11 @@ def main():
                 loss = loss / accum_steps
                 total_loss += loss.item()
 
-                # 累积详细损失信息
                 if loss_dict:
                     if loss_dict.get('loss_ctc') is not None:
-                        total_ctc_loss += loss_dict['loss_ctc'].item()
+                        total_ctc_loss += loss_dict['loss_ctc']
                     if loss_dict.get('loss_rnnt') is not None:
-                        total_rnnt_loss += loss_dict['loss_rnnt'].item()
+                        total_rnnt_loss += loss_dict['loss_rnnt']
 
                 loss.backward()
 
@@ -128,8 +134,8 @@ def main():
                     log_gradient_stats(model)
 
                 if (i+1) % accum_steps == 0:
-                    # 梯度裁剪
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), grad_clip)
 
                     step = epoch * len(train_dataloader) + i
                     lr_factor = get_lr_factor(step)
@@ -149,7 +155,6 @@ def main():
             avg_ctc_loss = total_ctc_loss/(i+1) if total_ctc_loss > 0 else 0
             avg_rnnt_loss = total_rnnt_loss/(i+1) if total_rnnt_loss > 0 else 0
 
-            # 更新tqdm进度条显示
             postfix_dict = {
                 'loss': f'{avg_loss:.4f}',
                 'lr': f'{lr:.6f}'
@@ -168,13 +173,14 @@ def main():
 
             if loss_dict:
                 if loss_dict.get('loss_ctc') is not None:
-                    writer.add_scalar('train/loss_ctc', loss_dict['loss_ctc'].item(), global_step)
+                    writer.add_scalar('train/loss_ctc',
+                                      loss_dict['loss_ctc'], global_step)
                 if loss_dict.get('loss_rnnt') is not None:
-                    writer.add_scalar('train/loss_rnnt', loss_dict['loss_rnnt'].item(), global_step)
+                    writer.add_scalar('train/loss_rnnt',
+                                      loss_dict['loss_rnnt'], global_step)
 
         epoch_loss = total_loss / len(train_dataloader)
 
-        # 评估
         model.eval()
         test_loss = 0.0
         with torch.no_grad():
@@ -188,17 +194,19 @@ def main():
 
                 _, loss, _ = model(audios, audio_lens, texts, text_lens)
                 test_loss += loss.item() * audios.size(0)
-                test_progress.set_postfix({'test_loss': f'{test_loss/((i+1)*audios.size(0)):.4f}'})
+                test_progress.set_postfix(
+                    {'test_loss': f'{test_loss/((i+1)*audios.size(0)):.4f}'})
 
         test_loss = test_loss / len(test_dataloader.dataset)
-        print(f"Epoch {epoch+1} 完成, 在线RNNT训练损失: {epoch_loss:.4f}, 测试损失: {test_loss:.4f}")
-        
+        print(
+            f"Epoch {epoch+1} 完成, 在线RNNT训练损失: {epoch_loss:.4f}, 测试损失: {test_loss:.4f}")
+
         scheduler.step(test_loss)
         writer.add_scalar('epoch/train_loss', epoch_loss, epoch)
         writer.add_scalar('epoch/test_loss', test_loss, epoch)
-        writer.add_scalar('epoch/learning_rate', optim.state_dict()['param_groups'][0]['lr'], epoch)
+        writer.add_scalar('epoch/learning_rate',
+                          optim.state_dict()['param_groups'][0]['lr'], epoch)
 
-        # 保存模型
         dict1 = {
             "model": model.state_dict(),
             "optimizer": optim.state_dict(),

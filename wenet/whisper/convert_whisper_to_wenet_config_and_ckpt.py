@@ -28,6 +28,7 @@ python convert_whisper_to_wenet_config_and_ckpt.py \
 ```
 """
 
+from whisper.tokenizer import get_tokenizer
 import argparse
 import copy
 import os
@@ -37,7 +38,6 @@ import yaml
 
 _cpath_ = sys.path[0]
 sys.path.remove(_cpath_)
-from whisper.tokenizer import get_tokenizer
 
 sys.path.insert(0, _cpath_)
 

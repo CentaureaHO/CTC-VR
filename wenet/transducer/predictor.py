@@ -195,10 +195,10 @@ class RNNPredictor(PredictorBase):
         """
         assert len(cache) == 2
         state_m, state_c = cache[0], cache[1]
-        
+
         # Ensure input is on the same device as the embedding layer's weights
         input = input.to(self.embed.weight.device)
-        
+
         embed = self.embed(input)  # [batch, 1, emb_size]
         embed = self.dropout(embed)
         out, (m, c) = self.rnn(embed, (state_m, state_c))

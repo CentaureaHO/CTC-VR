@@ -1,12 +1,8 @@
-"""
-RNNT 模型训练和评估的公共配置参数
-"""
 import torch
 
 
 class Config:
-    """RNNT模型配置类"""
-    
+
     # 训练参数
     epochs = 50
     batch_size = 12
@@ -14,33 +10,39 @@ class Config:
     hidden_dim = 256
     accum_steps = 1
     grad_clip = 1.0
-    
-    # 流式训练参数
+
+    # 训练参数
     streaming = True
     static_chunk_size = 32
     use_dynamic_chunk = True
     num_decoding_left_chunks = 6
-    
+
     # 损失函数权重
     ctc_weight = 0.3
-    
-    # 设备和路径配置
+
+    # Predictor 配置
+    predictor_layers = 1
+    predictor_dropout = 0
+    ctc_dropout_rate = 0.1
+    rnnt_loss_clamp = -1.0
+    ignore_id = -1
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log_dir = "/root/tf-logs/speech-recognition-rnnt"
     save_dir = "./models"
-    
+
     # 评估参数
     eval_model_path = "./model.pt"
     eval_dataset = "dev"
-    eval_output = None  # 结果输出文件路径
-    use_ctc = True  # 是否使用CTC解码
-    
+    eval_output = None
+    use_ctc = True
+
     # 数据路径
     train_wav_scp = "./dataset/split/train/wav.scp"
     train_text = "./dataset/split/train/pinyin"
     test_wav_scp = "./dataset/split/test/wav.scp"
     test_text = "./dataset/split/test/pinyin"
-    
+
     @classmethod
     def print_config(cls):
         """打印配置信息"""
@@ -62,5 +64,12 @@ class Config:
         print()
         print(f"CTC权重: {cls.ctc_weight}")
         print(f"RNNT权重: {1.0 - cls.ctc_weight}")
+        print()
+        print(f"Predictor 层数: {cls.predictor_layers}")
+        print(f"Predictor Dropout: {cls.predictor_dropout}")
+        print(f"CTC Dropout Rate: {cls.ctc_dropout_rate}")
+        print(f"RNNT Loss Clamp: {cls.rnnt_loss_clamp}")
+        print(f"Ignore ID: {cls.ignore_id}")
+        print()
         print(f"使用设备: {cls.device}")
         print("=" * 50)

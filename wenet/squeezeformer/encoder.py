@@ -214,7 +214,8 @@ class SqueezeformerEncoder(nn.Module):
                     recover_activations.append(
                         (xs, chunk_masks, pos_emb, mask_pad))
                     xs, xs_lens, chunk_masks, mask_pad = \
-                        self.time_reduction_layer(xs, xs_lens, chunk_masks, mask_pad)
+                        self.time_reduction_layer(
+                            xs, xs_lens, chunk_masks, mask_pad)
                     pos_emb = pos_emb[:, ::2, :]
                     index += 1
 
@@ -348,7 +349,8 @@ class SqueezeformerEncoder(nn.Module):
                     recover_activations.append(
                         (xs, att_mask, pos_emb, mask_pad))
                     xs, xs_lens, att_mask, mask_pad = \
-                        self.time_reduction_layer(xs, xs_lens, att_mask, mask_pad)
+                        self.time_reduction_layer(
+                            xs, xs_lens, att_mask, mask_pad)
                     pos_emb = pos_emb[:, ::2, :]
                     index += 1
 

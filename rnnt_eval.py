@@ -153,9 +153,11 @@ def main():
         print(f"错误: 模型文件 {Config.eval_model_path} 未找到。")
         return
 
-    checkpoint = torch.load(Config.eval_model_path, map_location=current_device)
+    checkpoint = torch.load(Config.eval_model_path,
+                            map_location=current_device)
     model.load_state_dict(checkpoint['model'])
-    print(f"模型已从 {Config.eval_model_path} 加载，训练轮次: {checkpoint.get('epoch', -1)+1}")
+    print(
+        f"模型已从 {Config.eval_model_path} 加载，训练轮次: {checkpoint.get('epoch', -1)+1}")
 
     decode_method = "CTC" if Config.use_ctc else "RNNT"
     print(f"使用 {decode_method} 解码方法")
