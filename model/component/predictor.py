@@ -5,16 +5,10 @@ from torch import nn
 
 
 def apply_padding(input_tensor, padding, pad_value) -> torch.Tensor:
-    """
-    Args:
-        input_tensor: [bs, max_time_step, dim]
-        padding: [bs, max_time_step]
-    """
     return padding * pad_value + input_tensor * (1 - padding)
 
 
 class RNNPredictor(nn.Module):
-    """RNN预测器，支持LSTM"""
 
     def __init__(self,
                  voca_size: int,
@@ -33,7 +27,6 @@ class RNNPredictor(nn.Module):
         self.embed = nn.Embedding(voca_size, embed_size)
         self.dropout = nn.Dropout(embed_dropout)
 
-        # 直接使用LSTM，移除类注册机制
         self.rnn = nn.LSTM(
             input_size=embed_size,
             hidden_size=hidden_size,
@@ -52,13 +45,6 @@ class RNNPredictor(nn.Module):
         input_tensor: torch.Tensor,
         cache: Optional[List[torch.Tensor]] = None,
     ) -> torch.Tensor:
-        """
-        Args:
-            input_tensor (torch.Tensor): [batch, max_time).
-            cache : rnn predictor cache[0] == state_m, cache[1] == state_c
-        Returns:
-            output: [batch, max_time, output_size]
-        """
         embed = self.embed(input_tensor)  # [batch, max_time, emb_size]
         embed = self.dropout(embed)
 
@@ -96,16 +82,9 @@ class RNNPredictor(nn.Module):
             padding: torch.Tensor,
             cache: List[torch.Tensor]
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        """
-        Args:
-            input_tensor (torch.Tensor): [batch_size, time_step=1]
-            padding (torch.Tensor): [batch_size,1], 1 is padding value
-            cache : rnn predictor cache[0] == state_m, cache[1] == state_c
-        """
         assert len(cache) == 2
         state_m, state_c = cache[0], cache[1]
 
-        # Ensure input is on the same device as the embedding layer's weights
         input_tensor = input_tensor.to(self.embed.weight.device)
 
         embed = self.embed(input_tensor)  # [batch, 1, emb_size]

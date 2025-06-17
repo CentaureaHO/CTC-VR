@@ -5,7 +5,6 @@ from torch import nn
 
 
 class TransducerJoint(torch.nn.Module):
-    """Transducer联合网络"""
 
     def __init__(self,
                  vocab_size: int,
@@ -50,13 +49,6 @@ class TransducerJoint(torch.nn.Module):
                 enc_out: torch.Tensor,
                 pred_out: torch.Tensor,
                 pre_project: bool = True) -> torch.Tensor:
-        """
-        Args:
-            enc_out (torch.Tensor): [B, T, E]
-            pred_out (torch.Tensor): [B, U, P]
-        Return:
-            [B,T,U,V]
-        """
         if (pre_project and self.prejoin_linear and self.enc_ffn is not None
                 and self.pred_ffn is not None):
             enc_out = self.enc_ffn(enc_out)  # [B,T,E] -> [B,T,D]
@@ -67,13 +59,11 @@ class TransducerJoint(torch.nn.Module):
         if pred_out.ndim != 4:
             pred_out = pred_out.unsqueeze(1)  # [B,U,D] -> [B,1,U,D]
 
-        # 联合操作（加法）
         out = enc_out + pred_out  # [B,T,U,D]
 
         if self.postjoin_linear and self.post_ffn is not None:
             out = self.post_ffn(out)
 
-        # 激活函数和输出投影
         out = self.activation(out)
         out = self.ffn_out(out)
         return out

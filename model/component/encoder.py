@@ -7,7 +7,6 @@ import math
 
 
 class PositionalEncoding(nn.Module):
-    """位置编码"""
 
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
         super().__init__()
@@ -28,7 +27,6 @@ class PositionalEncoding(nn.Module):
 
 
 class Conv2dSubsampling4(nn.Module):
-    """卷积下采样层，下采样率为4"""
 
     def __init__(self, input_dim: int, output_dim: int, dropout_rate: float = 0.1):
         super().__init__()
@@ -55,7 +53,6 @@ class Conv2dSubsampling4(nn.Module):
 
 
 class MultiHeadedAttention(nn.Module):
-    """多头注意力机制"""
 
     def __init__(self, n_head: int, n_feat: int, dropout_rate: float = 0.0):
         super().__init__()
@@ -101,7 +98,6 @@ class MultiHeadedAttention(nn.Module):
 
 
 class PositionwiseFeedForward(nn.Module):
-    """前馈网络"""
 
     def __init__(self, idim: int, hidden_units: int, dropout_rate: float, activation: nn.Module = nn.ReLU()):
         super().__init__()
@@ -115,7 +111,6 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class ConvolutionModule(nn.Module):
-    """Conformer卷积模块"""
 
     def __init__(self, channels: int, kernel_size: int, activation: nn.Module = nn.SiLU(),
                  norm: str = "batch_norm", causal: bool = False, bias: bool = True):
@@ -135,14 +130,11 @@ class ConvolutionModule(nn.Module):
 
     def forward(self, x: torch.Tensor, mask_pad: torch.Tensor = torch.ones((0, 0, 0), dtype=torch.bool),
                 cache: torch.Tensor = torch.zeros((0, 0, 0, 0))) -> Tuple[torch.Tensor, torch.Tensor]:
-        # exchange the temporal dimension and the feature dimension
         x = x.transpose(1, 2)  # (batch, channels, time)
 
-        # GLU mechanism
         x = self.pointwise_conv1(x)  # (batch, 2*channels, time)
         x = F.glu(x, dim=1)  # (batch, channels, time)
 
-        # 1D Depthwise Conv
         x = self.depthwise_conv(x)
         if isinstance(self.norm, nn.BatchNorm1d):
             x = self.norm(x)
@@ -156,7 +148,6 @@ class ConvolutionModule(nn.Module):
 
 
 class ConformerEncoderLayer(nn.Module):
-    """Conformer编码器层"""
 
     def __init__(self, size: int, self_attn: nn.Module, feed_forward: nn.Module,
                  feed_forward_macaron: Optional[nn.Module] = None, conv_module: Optional[nn.Module] = None,
@@ -187,7 +178,6 @@ class ConformerEncoderLayer(nn.Module):
                                     torch.zeros((0, 0, 0, 0))),
                 cnn_cache: torch.Tensor = torch.zeros((0, 0, 0, 0))) -> Tuple[torch.Tensor, torch.Tensor, tuple, torch.Tensor]:
 
-        # macaron style feed forward module
         if self.feed_forward_macaron is not None:
             residual = x
             if self.normalize_before:
@@ -197,7 +187,6 @@ class ConformerEncoderLayer(nn.Module):
             if not self.normalize_before:
                 x = self.norm_ff_macaron(x)
 
-        # multi-headed self-attention module
         residual = x
         if self.normalize_before:
             x = self.norm_mha(x)
@@ -207,7 +196,6 @@ class ConformerEncoderLayer(nn.Module):
         if not self.normalize_before:
             x = self.norm_mha(x)
 
-        # convolution module
         new_cnn_cache = torch.zeros((0, 0, 0), dtype=x.dtype, device=x.device)
         if self.conv_module is not None:
             residual = x
@@ -218,7 +206,6 @@ class ConformerEncoderLayer(nn.Module):
             if not self.normalize_before:
                 x = self.norm_conv(x)
 
-        # feed forward module
         residual = x
         if self.normalize_before:
             x = self.norm_ff(x)
@@ -233,7 +220,6 @@ class ConformerEncoderLayer(nn.Module):
 
 
 def make_pad_mask(lengths: torch.Tensor, max_len: int = 0) -> torch.Tensor:
-    """生成padding mask"""
     batch_size = lengths.size(0)
     if max_len == 0:
         max_len = lengths.max().item()
@@ -245,7 +231,6 @@ def make_pad_mask(lengths: torch.Tensor, max_len: int = 0) -> torch.Tensor:
 
 
 class ConformerEncoder(nn.Module):
-    """Conformer编码器"""
 
     def __init__(self, input_size: int, output_size: int = 256, attention_heads: int = 4,
                  linear_units: int = 2048, num_blocks: int = 6, dropout_rate: float = 0.1,
@@ -265,8 +250,7 @@ class ConformerEncoder(nn.Module):
         self.static_chunk_size = static_chunk_size
         self.use_dynamic_chunk = use_dynamic_chunk
 
-        # 构建编码器层
-        activation = nn.SiLU()  # 使用SiLU替代Swish
+        activation = nn.SiLU()
         self.encoders = nn.ModuleList([
             ConformerEncoderLayer(
                 output_size,
@@ -288,27 +272,12 @@ class ConformerEncoder(nn.Module):
 
     def forward(self, xs: torch.Tensor, xs_lens: torch.Tensor,
                 decoding_chunk_size: int = 0, num_decoding_left_chunks: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
-        """编码器前向传播
-
-        Args:
-            xs: 输入特征 (B, T, D)
-            xs_lens: 输入长度 (B,)
-            decoding_chunk_size: 解码chunk大小
-            num_decoding_left_chunks: 左侧chunk数量
-
-        Returns:
-            encoder output tensor xs, and subsampled masks
-            xs: 编码器输出 (B, T', D)  
-            masks: padding mask (B, 1, T')
-        """
         T = xs.size(1)
         masks = ~make_pad_mask(xs_lens, T).unsqueeze(1)  # (B, 1, T)
 
-        # 子采样和位置编码
         xs, pos_emb, masks = self.embed(xs, masks)
         mask_pad = masks  # (B, 1, T/subsample_rate)
 
-        # 通过编码器层
         for layer in self.encoders:
             xs, masks, _, _ = layer(xs, masks, pos_emb, mask_pad)
 

@@ -23,38 +23,43 @@ def basic_greedy_search(
     model,
     encoder_out: torch.Tensor,
     encoder_out_lens: torch.Tensor,
-    n_steps: int = 64
+    n_steps: int = 64,
 ) -> List[List[int]]:
-    """基础贪婪搜索"""
     batch_size = encoder_out.size(0)
-    max_time = encoder_out.size(1)
 
     hyps = []
     for b in range(batch_size):
         hyp = []
         time_len = encoder_out_lens[b].item()
+        enc_out_b = encoder_out[b:b+1, :time_len, :]  # [1, time_len, D]
 
-        # 初始化预测器状态
-        cache = model.predictor.init_state(1, encoder_out.device)
+        predictor_cache = model.predictor.init_state(1, device=encoder_out.device)
+        prev_out_token = torch.tensor([[model.blank]], device=encoder_out.device, dtype=torch.long)
 
-        # 贪婪搜索
         for t in range(time_len):
-            enc_out_t = encoder_out[b:b+1, t:t+1, :]  # [1, 1, D]
+            enc_out_t = enc_out_b[:, t:t+1, :]  # [1, 1, D] (当前时间步的编码器输出)
 
-            # 预测器输入（从blank开始）
-            pred_input = torch.tensor(
-                [[model.blank]], device=encoder_out.device)
-            pred_out = model.predictor(pred_input)  # [1, 1, D]
+            for _ in range(n_steps):
+                padding_for_step = torch.zeros_like(prev_out_token, device=prev_out_token.device)
 
-            # 联合网络
-            joint_out = model.joint(enc_out_t, pred_out)  # [1, 1, 1, V]
-            joint_out = joint_out.squeeze(0).squeeze(0).squeeze(0)  # [V]
+                pred_out_u, new_predictor_cache = model.predictor.forward_step(
+                    prev_out_token,
+                    padding=padding_for_step,
+                    cache=predictor_cache
+                )  # pred_out_u: [1, 1, predictor_output_dim]
 
-            # 贪婪选择
-            pred_token = torch.argmax(joint_out).item()
+                joint_out = model.joint(enc_out_t, pred_out_u)  # [1, 1, 1, V]
 
-            if pred_token != model.blank:
-                hyp.append(pred_token)
+                log_probs = joint_out.squeeze(0).squeeze(0).squeeze(0)  # [V]
+
+                current_token_id = torch.argmax(log_probs).item()
+
+                if current_token_id == model.blank:
+                    break
+                else:
+                    hyp.append(current_token_id)
+                    prev_out_token = torch.tensor([[current_token_id]], device=encoder_out.device, dtype=torch.long)
+                    predictor_cache = new_predictor_cache
 
         hyps.append(hyp)
 
@@ -62,7 +67,6 @@ def basic_greedy_search(
 
 
 class Transducer(nn.Module):
-    """简化的Transducer模型，只支持RNNT+CTC混合训练"""
 
     def __init__(
         self,
@@ -96,17 +100,14 @@ class Transducer(nn.Module):
         batch: dict,
         device: torch.device,
     ) -> Dict[str, Optional[torch.Tensor]]:
-        """前向传播计算损失"""
         speech = batch['feats'].to(device)
         speech_lengths = batch['feats_lengths'].to(device)
         text = batch['target'].to(device)
         text_lengths = batch['target_lengths'].to(device)
 
-        # 编码器前向
         encoder_out, encoder_mask = self.encoder(speech, speech_lengths)
         encoder_out_lens = encoder_mask.squeeze(1).sum(1)
 
-        # 计算RNNT损失
         loss_rnnt = self._compute_rnnt_loss(
             encoder_out,
             encoder_out_lens,
@@ -116,7 +117,6 @@ class Transducer(nn.Module):
 
         loss = self.transducer_weight * loss_rnnt
 
-        # 计算CTC损失
         loss_ctc: Optional[torch.Tensor] = None
         if self.ctc_weight != 0.0 and self.ctc is not None:
             loss_ctc, _ = self.ctc(
@@ -137,12 +137,10 @@ class Transducer(nn.Module):
         num_decoding_left_chunks: int = -1,
         n_steps: int = 64,
     ) -> List[List[int]]:
-        """贪婪搜索解码"""
         assert speech.size(0) == 1
         assert speech.shape[0] == speech_lengths.shape[0]
         assert decoding_chunk_size != 0
 
-        # 编码器前向
         encoder_out, encoder_mask = self.encoder(
             speech,
             speech_lengths,
@@ -151,7 +149,6 @@ class Transducer(nn.Module):
         )
         encoder_out_lens = encoder_mask.squeeze(1).sum()
 
-        # 贪婪搜索
         hyps = basic_greedy_search(
             self,
             encoder_out,
@@ -168,24 +165,18 @@ class Transducer(nn.Module):
         text: torch.Tensor,
         text_lengths: torch.Tensor,
     ) -> torch.Tensor:
-        """计算RNNT损失"""
-        # 在文本中添加blank符号
         ys_in_pad = add_blank(text, self.blank, self.ignore_id)
 
-        # 预测器前向
         predictor_out = self.predictor(ys_in_pad)
 
-        # 联合网络前向
         joint_out = self.joint(encoder_out, predictor_out)
 
-        # 准备RNNT损失计算的输入
         rnnt_text = text.to(torch.int64)
         rnnt_text = torch.where(
             rnnt_text == self.ignore_id, 0, rnnt_text).to(torch.int32)
         rnnt_text_lengths = text_lengths.to(torch.int32)
         encoder_out_lens = encoder_out_lens.to(torch.int32)
 
-        # 计算RNNT损失
         loss = torchaudio.functional.rnnt_loss(
             joint_out,
             rnnt_text,
