@@ -56,18 +56,19 @@ def calculate_cer(pre_tokens: list, gt_tokens: list) -> tuple:
     return cer, S, D, I, N
 
 
-def evaluate_online_model(dataloader, model, tokenizer, device='cpu',
-                          output_file=None, use_ctc=False, streaming=True):
-    """评估在线RNNT模型"""
+def evaluate_streaming(dataloader, model, tokenizer, device='cpu',
+                       output_file=None, beam_size=4):
+    """评估流式beam search RNNT模型"""
     all_refs = []
-    all_hyps = []
+    all_hyps_greedy = []
+    all_hyps_beam = []
 
     if output_file:
         f_out = open(output_file, 'w', encoding='utf-8')
 
     model.eval()
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="评估中"):
+        for batch in tqdm(dataloader, desc="流式Beam Search评估中"):
             batch = to_device(batch, device)
             audios = batch['audios']
             audio_lens = batch['audio_lens']
@@ -82,65 +83,79 @@ def evaluate_online_model(dataloader, model, tokenizer, device='cpu',
                 single_text = texts[j:j+1]
                 single_text_len = text_lens[j:j+1]
 
-                if use_ctc:
-                    hyps_batch = model.ctc_greedy_search(
-                        single_audio, single_audio_len)
-                    hyp = hyps_batch[0] if hyps_batch and len(
-                        hyps_batch) > 0 else []
-                else:
-                    if streaming:
-                        model.reset_streaming_cache()
-                        hyps_batch, _, _ = model.streaming_inference(
-                            single_audio, single_audio_len)
-                    else:
-                        model.streaming = False
-                        hyps_batch, _, _ = model(
-                            single_audio, single_audio_len)
-                        model.streaming = Config.streaming
+                model.reset_streaming_cache()
+                hyps_greedy, _, _ = model.streaming_inference(
+                    single_audio, single_audio_len)
+                hyp_greedy = hyps_greedy[0] if hyps_greedy and len(
+                    hyps_greedy) > 0 else []
 
-                    hyp = hyps_batch[0] if hyps_batch and len(
-                        hyps_batch) > 0 else []
+                model.reset_streaming_cache()
+                hyps_beam, _, _ = model.streaming_beam_search(
+                    single_audio, single_audio_len, beam_size=beam_size)
+                hyp_beam = hyps_beam[0] if hyps_beam and len(
+                    hyps_beam) > 0 else []
 
                 ref = single_text[0, :single_text_len[0]].cpu().tolist()
                 all_refs.append(ref)
-                all_hyps.append(hyp)
+                all_hyps_greedy.append(hyp_greedy)
+                all_hyps_beam.append(hyp_beam)
 
                 if output_file:
                     ref_text = tokenizer.decode(ref)
-                    hyp_text = tokenizer.decode(hyp)
-                    decode_method = "CTC" if use_ctc else (
-                        "Streaming-RNNT" if streaming else "RNNT")
-                    f_out.write(f"[{decode_method}] REF: {ref_text}\n")
-                    f_out.write(f"[{decode_method}] HYP: {hyp_text}\n\n")
+                    hyp_greedy_text = tokenizer.decode(hyp_greedy)
+                    hyp_beam_text = tokenizer.decode(hyp_beam)
+                    f_out.write(f"REF:    {ref_text}\n")
+                    f_out.write(f"GREEDY: {hyp_greedy_text}\n")
+                    f_out.write(f"BEAM:   {hyp_beam_text}\n\n")
 
     if output_file:
         f_out.close()
 
     total_S = total_D = total_I = total_N = 0
-    for ref, hyp in zip(all_refs, all_hyps):
+    for ref, hyp in zip(all_refs, all_hyps_greedy):
         cer, S, D, I, N = calculate_cer(hyp, ref)
         total_S += S
         total_D += D
         total_I += I
         total_N += N
 
-    final_cer = (total_S + total_D + total_I) / total_N if total_N > 0 else 1.0
+    greedy_cer = (total_S + total_D + total_I) / \
+        total_N if total_N > 0 else 1.0
 
-    print(f"评估结果:")
-    print(
-        f"替换(S): {total_S}, 删除(D): {total_D}, 插入(I): {total_I}, 参考长度(N): {total_N}")
-    print(f"CER: {final_cer:.4f} ({total_S+total_D+total_I}/{total_N})")
+    total_S = total_D = total_I = total_N = 0
+    for ref, hyp in zip(all_refs, all_hyps_beam):
+        cer, S, D, I, N = calculate_cer(hyp, ref)
+        total_S += S
+        total_D += D
+        total_I += I
+        total_N += N
+
+    beam_cer = (total_S + total_D + total_I) / total_N if total_N > 0 else 1.0
+
+    print(f"流式Greedy Search 评估结果:")
+    print(f"CER: {greedy_cer:.4f}")
+
+    print(f"\n流式Beam Search (beam_size={beam_size}) 评估结果:")
+    print(f"CER: {beam_cer:.4f}")
+
+    print(f"\nCER改进: {
+          greedy_cer - beam_cer:.4f} ({'提升' if beam_cer < greedy_cer else '下降'})")
 
     print("\n样本对比 (前5个):")
     for i in range(min(5, len(all_refs))):
-        print(f"参考: {tokenizer.decode(all_refs[i])}")
-        print(f"预测: {tokenizer.decode(all_hyps[i])}")
+        print(f"参考:   {tokenizer.decode(all_refs[i])}")
+        print(f"Greedy: {tokenizer.decode(all_hyps_greedy[i])}")
+        print(f"Beam:   {tokenizer.decode(all_hyps_beam[i])}")
         print()
 
-    return final_cer
+    return greedy_cer, beam_cer
 
 
 def main():
+    beam_size = 4
+    if len(os.sys.argv) > 1:
+        beam_size = int(os.sys.argv[1])
+
     tokenizer_instance = Tokenizer()
 
     dataset_path = f"./dataset/split/{Config.eval_dataset}"
@@ -180,51 +195,25 @@ def main():
     print(f"在线模型已从 {model_path} 加载，训练轮次: {checkpoint.get('epoch', -1)+1}")
 
     print("=" * 60)
-    print("在线RNNT模型评估")
+    print(f"流式Beam Search RNNT模型评估 (beam_size={beam_size})")
     print("=" * 60)
 
-    print("1. 流式RNNT解码评估:")
     output_file = Config.eval_output
     if output_file:
-        output_file = output_file.replace('.txt', '_streaming.txt')
+        output_file = output_file.replace(
+            '.txt', f'_beam_search_{beam_size}.txt')
 
-    cer_streaming = evaluate_online_model(
+    greedy_cer, beam_cer = evaluate_streaming(
         dataloader, model, tokenizer_instance, current_device,
-        output_file, use_ctc=False, streaming=True
+        output_file, beam_size=beam_size
     )
-    print(f"流式RNNT CER ({Config.eval_dataset}集): {cer_streaming:.4f}")
-
-    print("\n" + "="*60)
-
-    print("2. 非流式RNNT解码评估:")
-    output_file = Config.eval_output
-    if output_file:
-        output_file = output_file.replace('.txt', '_non_streaming.txt')
-
-    cer_non_streaming = evaluate_online_model(
-        dataloader, model, tokenizer_instance, current_device,
-        output_file, use_ctc=False, streaming=False
-    )
-    print(f"非流式RNNT CER ({Config.eval_dataset}集): {cer_non_streaming:.4f}")
-
-    print("\n" + "="*60)
-
-    print("3. CTC解码评估:")
-    output_file = Config.eval_output
-    if output_file:
-        output_file = output_file.replace('.txt', '_ctc.txt')
-
-    cer_ctc = evaluate_online_model(
-        dataloader, model, tokenizer_instance, current_device,
-        output_file, use_ctc=True, streaming=True
-    )
-    print(f"CTC CER ({Config.eval_dataset}集): {cer_ctc:.4f}")
 
     print("\n" + "="*60)
     print("评估总结:")
-    print(f"流式RNNT CER:     {cer_streaming:.4f}")
-    print(f"非流式RNNT CER:   {cer_non_streaming:.4f}")
-    print(f"CTC CER:          {cer_ctc:.4f}")
+    print(f"流式Greedy Search CER: {greedy_cer:.4f}")
+    print(f"流式Beam Search CER:   {beam_cer:.4f}")
+    print(f"Beam Search相对改进:   {
+          ((greedy_cer - beam_cer) / greedy_cer * 100):.2f}%")
     print("="*60)
 
 

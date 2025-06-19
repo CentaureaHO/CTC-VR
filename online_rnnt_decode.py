@@ -5,9 +5,10 @@ from tokenizer.tokenizer import Tokenizer
 from model.online_rnnt_model import OnlineRNNTModel
 from data.dataloader import extract_audio_features
 from rnnt_common import Config
+import argparse
 
 
-def decode_single_audio(audio_file: str, model_path: str = "./online_model.pt"):
+def decode_single_audio(audio_file: str, model_path: str = "./online_model.pt", beam_size: int = 4):
     print(f"正在加载音频文件: {audio_file}")
 
     if not os.path.exists(audio_file):
@@ -61,7 +62,7 @@ def decode_single_audio(audio_file: str, model_path: str = "./online_model.pt"):
     model.eval()
 
     print("\n" + "="*60)
-    print("开始流式识别...")
+    print("开始流式识别对比 (Greedy vs Beam Search)")
     print("="*60)
 
     chunk_size_frames = Config.static_chunk_size
@@ -69,20 +70,22 @@ def decode_single_audio(audio_file: str, model_path: str = "./online_model.pt"):
 
     print(f"流式配置: 每块 {chunk_size_frames} 帧 (最小 {min_chunk_size} 帧)")
     print(f"总音频长度: {audio_tensor.shape[1]} 帧")
+    print(f"Beam Search 大小: {beam_size}")
     print("开始逐块处理...")
 
     with torch.no_grad():
+        print("\n" + "-"*40)
+        print("Greedy Search 流式处理")
+        print("-"*40)
+        
         model.reset_streaming_cache()
-
-        all_tokens = []
-        current_text = []
-
+        greedy_tokens = []
+        greedy_text = []
         current_offset = 0
         chunk_idx = 0
 
         while current_offset < audio_tensor.shape[1]:
-            chunk_end = min(current_offset + chunk_size_frames,
-                            audio_tensor.shape[1])
+            chunk_end = min(current_offset + chunk_size_frames, audio_tensor.shape[1])
 
             if audio_tensor.shape[1] - chunk_end < min_chunk_size and chunk_end < audio_tensor.shape[1]:
                 chunk_end = audio_tensor.shape[1]
@@ -90,25 +93,81 @@ def decode_single_audio(audio_file: str, model_path: str = "./online_model.pt"):
             current_chunk = audio_tensor[:, current_offset:chunk_end, :]
             chunk_len = torch.tensor([current_chunk.shape[1]], device=device)
 
-            print(
-                f"\n处理块 {chunk_idx+1}: 帧 {current_offset}:{chunk_end} (长度: {current_chunk.shape[1]})")
+            print(f"\n处理块 {chunk_idx+1}: 帧 {current_offset}:{chunk_end} (长度: {current_chunk.shape[1]})")
 
             try:
-                chunk_tokens, _, _ = model.process_single_chunk(
-                    current_chunk, chunk_len)
+                chunk_tokens, _, _ = model.process_single_chunk(current_chunk, chunk_len)
 
                 if chunk_tokens:
-                    all_tokens.extend(chunk_tokens)
+                    greedy_tokens.extend(chunk_tokens)
                     chunk_text = tokenizer.decode(chunk_tokens)
-                    current_text += chunk_text
-                    print(
-                        f"  块输出: {' '.join(chunk_text)} (tokens: {chunk_tokens})")
-                    print(f"  累积结果: {' '.join(current_text)}")
+                    greedy_text += chunk_text
+                    print(f"  Greedy输出: {' '.join(chunk_text)} (tokens: {chunk_tokens})")
+                    print(f"  Greedy累积: {' '.join(greedy_text)}")
                 else:
-                    print(f"  块输出: [无输出]")
+                    print(f"  Greedy输出: [无输出]")
 
             except Exception as e:
-                print(f"  块处理失败: {e}")
+                print(f"  Greedy处理失败: {e}")
+
+            current_offset = chunk_end
+            chunk_idx += 1
+
+            if chunk_end >= audio_tensor.shape[1]:
+                break
+
+        print("\n" + "-"*40)
+        print("Beam Search 流式处理")
+        print("-"*40)
+        
+        model.reset_streaming_cache()
+        beam_tokens = []
+        beam_text = []
+        current_offset = 0
+        chunk_idx = 0
+
+        while current_offset < audio_tensor.shape[1]:
+            chunk_end = min(current_offset + chunk_size_frames, audio_tensor.shape[1])
+
+            if audio_tensor.shape[1] - chunk_end < min_chunk_size and chunk_end < audio_tensor.shape[1]:
+                chunk_end = audio_tensor.shape[1]
+
+            current_chunk = audio_tensor[:, current_offset:chunk_end, :]
+            chunk_len = torch.tensor([current_chunk.shape[1]], device=device)
+
+            print(f"\n处理块 {chunk_idx+1}: 帧 {current_offset}:{chunk_end} (长度: {current_chunk.shape[1]})")
+
+            try:
+                beam_hypotheses, _, _ = model.process_single_chunk_beam_search(
+                    current_chunk, chunk_len, beam_size=beam_size)
+
+                if beam_hypotheses:
+                    best_hyp = max(beam_hypotheses, key=lambda x: x.log_prob)
+ 
+                    new_tokens = best_hyp.tokens[len(beam_tokens):]
+                    if new_tokens:
+                        beam_tokens.extend(new_tokens)
+                        chunk_text = tokenizer.decode(new_tokens)
+                        beam_text += chunk_text
+                        print(f"  Beam输出: {' '.join(chunk_text)} (tokens: {new_tokens})")
+                        print(f"  Beam累积: {' '.join(beam_text)}")
+                    else:
+                        print(f"  Beam输出: [无新增输出]")
+                        current_text = tokenizer.decode(best_hyp.tokens)
+                        print(f"  Beam当前: {' '.join(current_text)}")
+                    
+                    print(f"  所有候选假设 ({len(beam_hypotheses)}个):")
+                    sorted_hyps = sorted(beam_hypotheses, key=lambda x: x.log_prob, reverse=True)
+                    
+                    for i, hyp in enumerate(sorted_hyps):
+                        hyp_text = tokenizer.decode(hyp.tokens)
+                        print(f"    {i+1}. {' '.join(hyp_text)} (log_prob: {hyp.log_prob:.4f}, tokens: {hyp.tokens})")
+                        
+                else:
+                    print(f"  Beam输出: [无输出]")
+
+            except Exception as e:
+                print(f"  Beam处理失败: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -119,11 +178,16 @@ def decode_single_audio(audio_file: str, model_path: str = "./online_model.pt"):
                 break
 
         print(f"\n" + "="*60)
-        print("流式识别完成")
+        print("流式识别对比结果")
         print("="*60)
-        print(f"最终结果: {' '.join(current_text)}")
-        print(f"最终Token序列: {all_tokens}")
+        print(f"Greedy Search 结果: {' '.join(greedy_text)}")
+        print(f"Greedy Token序列: {greedy_tokens}")
+        print(f"Beam Search 结果: {' '.join(beam_text)}")
+        print(f"Beam Token序列: {beam_tokens}")
         print(f"处理了 {chunk_idx} 个音频块")
+
+        if greedy_tokens == beam_tokens:
+            print("Greedy和Beam Search的输出完全相同！")
 
     print("\n" + "="*60)
     print("识别完成")
@@ -131,22 +195,25 @@ def decode_single_audio(audio_file: str, model_path: str = "./online_model.pt"):
 
 
 def main():
-    audio_file = "./dataset/Wave/000020.wav"
-    model_path = "./online_model.pt"
+    parser = argparse.ArgumentParser(description="RNNT Streaming Decoder")
+    parser.add_argument("--audio_id", type=str, default='008001', help="Audio ID to decode")
+    parser.add_argument("--model_path", type=str, default="./online_model.pt", help="Path to model file")
+    parser.add_argument("--beam_size", type=int, default=4, help="Beam search size")
+    
+    args = parser.parse_args()
 
-    if len(sys.argv) > 1:
-        audio_file = sys.argv[1]
-    if len(sys.argv) > 2:
-        model_path = sys.argv[2]
+    audio_file = f'./dataset/Wave/{args.audio_id}.wav'
+    model_path = args.model_path
+    beam_size = args.beam_size
 
     print("="*60)
     print(f"音频文件: {audio_file}")
     print(f"模型文件: {model_path}")
-    print(
-        f"流式配置: 块大小={Config.static_chunk_size}, 动态块={Config.use_dynamic_chunk}")
+    print(f"Beam Search 大小: {beam_size}")
+    print(f"流式配置: 块大小={Config.static_chunk_size}, 动态块={Config.use_dynamic_chunk}")
     print("="*60)
 
-    decode_single_audio(audio_file, model_path)
+    decode_single_audio(audio_file, model_path, beam_size)
 
 
 if __name__ == "__main__":
