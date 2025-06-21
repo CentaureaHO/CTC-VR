@@ -35,7 +35,7 @@ class Config:
     eval_model_path = "./models/offline.pt"
     eval_dataset = "dev"
     eval_output = None
-    use_ctc = False
+    use_ctc = True
 
     # 数据路径
     train_wav_scp = "./dataset/split/train/wav.scp"
