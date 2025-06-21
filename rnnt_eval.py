@@ -72,31 +72,21 @@ def evaluate_model(dataloader, model, tokenizer, device='cpu', output_file=None,
             texts = batch['texts']
             text_lens = batch['text_lens']
 
-            batch_size = audios.size(0)
+            hyps_batch = []
+            if use_ctc:
+                # 使用CTC解码
+                hyps_batch = model.ctc_greedy_search(audios, audio_lens)
+            else:
+                # 使用RNNT解码
+                hyps_batch, _, _ = model(audios, audio_lens)
 
-            for j in range(batch_size):
-                single_audio = audios[j:j+1]
-                single_audio_len = audio_lens[j:j+1]
-                single_text = texts[j:j+1]
-                single_text_len = text_lens[j:j+1]
+            refs_batch = [texts[i, :text_lens[i]].cpu().tolist() for i in range(texts.size(0))]
+            
+            all_refs.extend(refs_batch)
+            all_hyps.extend(hyps_batch)
 
-                if use_ctc:
-                    # 使用CTC解码
-                    hyps_batch = model.ctc_greedy_search(
-                        single_audio, single_audio_len)
-                    hyp = hyps_batch[0] if hyps_batch and len(
-                        hyps_batch) > 0 else []
-                else:
-                    # 使用RNNT解码
-                    hyps_batch, _, _ = model(single_audio, single_audio_len)
-                    hyp = hyps_batch[0] if hyps_batch and len(
-                        hyps_batch) > 0 else []
-
-                ref = single_text[0, :single_text_len[0]].cpu().tolist()
-                all_refs.append(ref)
-                all_hyps.append(hyp)
-
-                if output_file:
+            if output_file:
+                for ref, hyp in zip(refs_batch, hyps_batch):
                     ref_text = tokenizer.decode(ref)
                     hyp_text = tokenizer.decode(hyp)
                     f_out.write(f"REF: {ref_text}\n")

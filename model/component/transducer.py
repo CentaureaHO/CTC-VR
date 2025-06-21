@@ -36,7 +36,7 @@ def basic_greedy_search(
         predictor_cache = model.predictor.init_state(
             1, device=encoder_out.device)
         prev_out_token = torch.tensor(
-            [[model.blank_id]], device=encoder_out.device, dtype=torch.long)
+            [[model.blank]], device=encoder_out.device, dtype=torch.long)
 
         for t in range(time_len):
             enc_out_t = enc_out_b[:, t:t+1, :]  # [1, 1, D] (当前时间步的编码器输出)
@@ -57,7 +57,7 @@ def basic_greedy_search(
 
                 current_token_id = torch.argmax(log_probs).item()
 
-                if current_token_id == model.blank_id:
+                if current_token_id == model.blank:
                     break
                 else:
                     hyp.append(current_token_id)
@@ -141,17 +141,13 @@ class Transducer(nn.Module):
         num_decoding_left_chunks: int = -1,
         n_steps: int = 64,
     ) -> List[List[int]]:
-        assert speech.size(0) == 1
         assert speech.shape[0] == speech_lengths.shape[0]
-        assert decoding_chunk_size != 0
 
         encoder_out, encoder_mask = self.encoder(
             speech,
             speech_lengths,
-            decoding_chunk_size,
-            num_decoding_left_chunks,
         )
-        encoder_out_lens = encoder_mask.squeeze(1).sum()
+        encoder_out_lens = encoder_mask.squeeze(1).sum(1)
 
         hyps = basic_greedy_search(
             self,

@@ -32,10 +32,10 @@ class Config:
     save_dir = "./models"
 
     # 评估参数
-    eval_model_path = "./model.pt"
+    eval_model_path = "./models/offline.pt"
     eval_dataset = "dev"
     eval_output = None
-    use_ctc = True
+    use_ctc = False
 
     # 数据路径
     train_wav_scp = "./dataset/split/train/wav.scp"
